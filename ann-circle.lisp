@@ -29,9 +29,12 @@
                  (0.6202665864805	0.21338014685827) (1)
                  (0.91481853364337	0.72430703536629) (0)
                  (0.20242022522838	0.59682386992072) (1)))
-        (ann (make-instance 't-net :topology '(2 30 1))))
+        (ann (make-instance 't-net :topology '(2 30 2 1))))
     (train ann t-set
-           :target-error 0.05
-           :randomize-weights t
-           :report-frequency-ms 333
-           :max-iterations 100000)))
+           :target-mse 0.05
+           :randomize-weights '(:max 0.2 :min -0.2)
+           ;; :rerandomize-weights t
+           :report-frequency 1000
+           :max-iterations 100000
+           :annealing 15000
+           :logger-function (λ (x) (format t "~a~%" x)))))

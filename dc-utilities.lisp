@@ -711,7 +711,7 @@ a sum of the return values of all the threads that ran."
                        (sb-thread:list-all-threads))
      while threads do
        (loop for thread in threads
-          do (sb-thread:destroy-thread thread))
+          do (sb-thread:terminate-thread thread))
        (sleep 3)
      finally (sb-thread:list-all-threads)))
 

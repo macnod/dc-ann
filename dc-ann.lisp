@@ -259,9 +259,9 @@
 (defgeneric anneal (object variance)
   (:method ((neuron t-neuron) (variance float))
     (loop for cx in (cxs neuron)
-         do (setf (weight cx)
-                  (+ (weight cx)
-                     (- (random (* variance 2))  variance)))
+       do (setf (weight cx)
+                (+ (weight cx)
+                   (/ (* (weight cx) (random variance)) 2)))
        finally (return neuron)))
   (:method ((layer t-layer) (variance float))
     (loop for neuron across (neuron-array layer)
@@ -308,7 +308,8 @@
               (status-function #'default-status-function)
               (logger-function nil)
               (randomize-weights nil)
-              (annealing nil))
+              (annealing nil)
+              (rerandomize-weights nil))
     (declare (float target-mse)
              (integer max-iterations report-frequency)
              (function report-function status-function))
@@ -330,19 +331,18 @@
        for i from 1 to max-iterations
        for mse = 1.0 then (present-vectors net t-set)
        while (> mse target-mse)
-       when (and (> i 1) (> mse 0.99)) do
-         (if (> mse 0.999)
-             (progn
-               (if (listp randomize-weights)
-                   (apply #'randomize-weights (cons net randomize-weights))
-                   (randomize-weights net))
-               (when logger-function
-                 (funcall logger-function "randomized weights")))
-             (when (and annealing (> (- i last-anneal-iteration) annealing))
-               (anneal net 1.0)
-               (setf last-anneal-iteration i)
-               (when logger-function
-                 (funcall logger-function "annealed weights"))))
+       when (and (> i 1) (> mse 0.80) (or rerandomize-weights annealing)) do
+         (when (and (> mse 0.999) rerandomize-weights)
+           (if (listp randomize-weights)
+               (apply #'randomize-weights (cons net randomize-weights))
+               (randomize-weights net))
+           (when logger-function
+             (funcall logger-function "randomized weights")))
+         (when (and annealing (> (- i last-anneal-iteration) annealing))
+           (anneal net 0.1)
+           (setf last-anneal-iteration i)
+           (when logger-function
+             (funcall logger-function "annealed weights")))
        when (and report-function
                  (or (not last-report-time)
                      (>= (- (get-internal-real-time) last-report-time) rf)))
