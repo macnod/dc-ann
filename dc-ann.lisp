@@ -54,16 +54,24 @@
                          :net (net layer))
           (neuron-array layer)))))
 
-(defun transfer-function-1 (input)
-  (declare (single-float input))
-  (cond
-    ((> input 50.0) 1.0)
-    ((< input -50.0) 0.0)
-    (t (/ 1.0 (1+ (exp (- input)))))))
+(defun bound-sigmoid (neuron)
+  (declare (t-neuron neuron))
+  (let ((input (input neuron)))
+    (cond
+      ((> input 50.0) 1.0)
+      ((< input -50.0) 0.0)
+      (t (/ 1.0 (1+ (exp (- input))))))))
 
-(defun transfer-derivative-1 (neuron)
+(defun bound-sigmoid-derivative (neuron)
   (declare (t-neuron neuron))
   (* (output neuron) (- 1 (output neuron))))
+
+(defun rectified-linear (neuron)
+  (max 0 (input neuron)))
+
+(defun rectified-linear-derivative (neuron)
+  (let ((output (output neuron)))
+    (if (< output 0) 0 output)))
 
 (defclass t-net ()
   "Describes a standard multilayer, fully-connected backpropagation neural network."
@@ -72,12 +80,12 @@
    (learning-rate :reader learning-rate :initarg :learning-rate :initform 0.1)
    (momentum :reader momentum :initarg :momentum :initform 0.3)
    (wi :accessor wi :initform 0)
-   (transfer-function :reader transfer-function
+   (transfer-function :accessor transfer-function
                       :initarg :transfer-function
-                      :initform #'transfer-function-1)
-   (transfer-derivative :reader transfer-derivative
+                      :initform #'rectified-linear)
+   (transfer-derivative :accessor transfer-derivative
                         :initarg :transfer-derivative
-                        :initform #'transfer-derivative-1)
+                        :initform #'rectified-linear-derivative)
    (layers :accessor layers)
    (next-id :accessor next-id :initform 0)))
 
@@ -97,7 +105,7 @@
   (setf (output neuron)
         (if (eq (layer-type (layer neuron)) :input)
             (input neuron)
-            (funcall (transfer-function (net neuron)) (input neuron))))
+            (funcall (transfer-function (net neuron)) neuron)))
   (setf (input neuron) (if (biased neuron) 1.0 0.0))
   neuron)
 
@@ -228,9 +236,13 @@
 (defgeneric randomize-weights (object &key)
   (:method ((neuron t-neuron) &key max min)
     (declare (float max min))
-    (loop for cx in (cxs neuron) do
-         (setf (weight cx) (+ (random (- max min)) min))
-         (setf (delta cx) 0))
+    (if (= max min)
+        (loop for cx in (cxs neuron) do
+             (setf (weight cx) max)
+             (setf (delta cx) 0))
+        (loop for cx in (cxs neuron) do
+             (setf (weight cx) (+ (random (- max min)) min))
+             (setf (delta cx) 0)))
     neuron)
   (:method ((layer t-layer) &key max min)
     (declare (float max min))
@@ -246,9 +258,9 @@
 (defgeneric anneal (object variance)
   (:method ((neuron t-neuron) (variance float))
     (loop for cx in (cxs neuron)
-         do (setf (weight cx)
-                  (+ (weight cx)
-                     (- (random (* variance 2))  variance)))
+       do (setf (weight cx)
+                (+ (weight cx)
+                   (/ (* (weight cx) (random variance)) 2)))
        finally (return neuron)))
   (:method ((layer t-layer) (variance float))
     (loop for neuron across (neuron-array layer)
@@ -274,24 +286,29 @@
   (:documentation "This function uses the standard backprogation of
   error method to train the neural network on the given sample set
   within the given constraints. Training is achieved when the target
-  error reaches a level that is equal to or below the given
-  target-mse value, within the given number of iterations. The
-  function returns t if training is achieved and nil otherwise. If
-  training is not achieved, the caller can call again to train for
-  additional iterations. If randomize-weights is set to true, then the
-  function starts training from scratch. This function accepts
-  callback parameters that allow the function to periodically report
-  on the progress of training.")
+  error reaches a level that is equal to or below the given target-mse
+  value, within the given number of iterations. The function returns t
+  if training is achieved and nil otherwise. If training is not
+  achieved, the caller can call again to train for additional
+  iterations. If randomize-weights is set to true, then the function
+  starts training from scratch. This function accepts callback
+  parameters that allow the function to periodically report on the
+  progress of training. t-net is a list of alternating input and
+  output lists, where each input/output list pair represents a single
+  training vector.  Here's an example for the exclusive-or problem:
+  '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))")
   (:method ((net t-net)
             (t-set list)
             &key 
-            (target-mse 0.08)
-            (max-iterations 10000)
-            (report-frequency 1000)
-            (report-function #'default-report-function)
-            (status-function #'default-status-function)
-            (logger-function nil)
-            (randomize-weights nil))
+              (target-mse 0.08)
+              (max-iterations 10000)
+              (report-frequency 1000)
+              (report-function #'default-report-function)
+              (status-function #'default-status-function)
+              (logger-function nil)
+              (randomize-weights nil)
+              (annealing nil)
+              (rerandomize-weights nil))
     (declare (float target-mse)
              (integer max-iterations report-frequency)
              (function report-function status-function))
@@ -313,19 +330,18 @@
        for i from 1 to max-iterations
        for mse = 1.0 then (present-vectors net t-set)
        while (> mse target-mse)
-       when (and (> i 1) (> mse 0.99)) do
-         (if (> mse 0.999)
-             (progn
-               (if (listp randomize-weights)
-                   (apply #'randomize-weights (cons net randomize-weights))
-                   (randomize-weights net))
-               (when logger-function
-                 (funcall logger-function "randomized weights")))
-             (when (> (- i last-anneal-iteration) 20)
-               (anneal net 1.0)
-               (setf last-anneal-iteration i)
-               (when logger-function
-                 (funcall logger-function "annealed weights"))))
+       when (and (> i 1) (> mse 0.80) (or rerandomize-weights annealing)) do
+         (when (and (> mse 0.999) rerandomize-weights)
+           (if (listp randomize-weights)
+               (apply #'randomize-weights (cons net randomize-weights))
+               (randomize-weights net))
+           (when logger-function
+             (funcall logger-function "randomized weights")))
+         (when (and annealing (> (- i last-anneal-iteration) annealing))
+           (anneal net 0.1)
+           (setf last-anneal-iteration i)
+           (when logger-function
+             (funcall logger-function "annealed weights")))
        when (and report-function
                  (or (not last-report-time)
                      (>= (- (get-internal-real-time) last-report-time) rf)))
