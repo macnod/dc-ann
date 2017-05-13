@@ -4,20 +4,17 @@
 ;; implementation of the standard backpropagation neural network.
 ;;
 
-(defpackage :dc-ann
-  (:use :cl :dc-utilities)
-  (:export t-cx t-neuron t-layer t-net randomize-weights feed train
-           ann-freeze ann-thaw run-test make-net anneal))
-
 (in-package :dc-ann)
 
 (defclass t-cx ()
+  (:documentation "Describes a neural connection to TARGET neuron.  WEIGHT represents the strength of the connection and DELTA contains the last change in WEIGHT.  TARGET is required.")
   ((target :reader target :initarg :target :initform (error ":neuron required")
            :type t-neuron)
    (weight :accessor weight :initarg :weight :initform 1.0 :type float)
    (delta :accessor delta :initform 0.0 :type float)))
 
 (defclass t-neuron ()
+  (:documentation "Describes a neuron.  NET, required, is an object of type t-net that represents the neural network that this neuron is a part of.  LAYER, required, is an object of type t-layer that represents the neural network layer that this neuron belongs to.  If BIASED is true, the neuron will not have incoming connections.  ID is a distinct integer that identifies the neuron. X-COOR and Y-COOR allow this neuron to be placed in 2-dimentional space.  CXS contains the list of outgoing connections (of type t-cx) to other neurons.")
   ((net :reader net :initarg :net :initform (error ":net required") :type t-net)
    (layer :reader layer :initarg :layer :initform (error ":layer required")
           :type integer)
@@ -31,6 +28,7 @@
    (cxs :accessor cxs :initform nil :type list)))
 
 (defclass t-layer ()
+  (:documentation "Describes a neural network layer.")
   ((neuron-array :accessor neuron-array :type vector)
    (layer-index :reader layer-index :initarg :layer-index :initform
                 (error ":layer-index required") :type integer)
@@ -68,6 +66,7 @@
   (* (output neuron) (- 1 (output neuron))))
 
 (defclass t-net ()
+  "Describes a standard multilayer, fully-connected backpropagation neural network."
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
    (learning-rate :reader learning-rate :initarg :learning-rate :initform 0.1)
