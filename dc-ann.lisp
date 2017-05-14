@@ -7,14 +7,15 @@
 (in-package :dc-ann)
 
 (defclass t-cx ()
-  (:documentation "Describes a neural connection to TARGET neuron.  WEIGHT represents the strength of the connection and DELTA contains the last change in WEIGHT.  TARGET is required.")
   ((target :reader target :initarg :target :initform (error ":neuron required")
            :type t-neuron)
    (weight :accessor weight :initarg :weight :initform 1.0 :type float)
-   (delta :accessor delta :initform 0.0 :type float)))
+   (delta :accessor delta :initform 0.0 :type float))
+  (:documentation "Describes a neural connection to TARGET neuron.  WEIGHT represents the strength of the connection and DELTA contains the last change in WEIGHT.  TARGET is required."))
+
+
 
 (defclass t-neuron ()
-  (:documentation "Describes a neuron.  NET, required, is an object of type t-net that represents the neural network that this neuron is a part of.  LAYER, required, is an object of type t-layer that represents the neural network layer that this neuron belongs to.  If BIASED is true, the neuron will not have incoming connections.  ID is a distinct integer that identifies the neuron. X-COOR and Y-COOR allow this neuron to be placed in 2-dimentional space.  CXS contains the list of outgoing connections (of type t-cx) to other neurons.")
   ((net :reader net :initarg :net :initform (error ":net required") :type t-net)
    (layer :reader layer :initarg :layer :initform (error ":layer required")
           :type integer)
@@ -25,10 +26,10 @@
    (err :accessor err :initform 0.0 :type float)
    (x-coor :accessor x-coor :initform 0.0 :type float)
    (y-coor :accessor y-coor :initform 0.0 :type float)
-   (cxs :accessor cxs :initform nil :type list)))
+   (cxs :accessor cxs :initform nil :type list))
+  (:documentation "Describes a neuron.  NET, required, is an object of type t-net that represents the neural network that this neuron is a part of.  LAYER, required, is an object of type t-layer that represents the neural network layer that this neuron belongs to.  If BIASED is true, the neuron will not have incoming connections.  ID is a distinct integer that identifies the neuron. X-COOR and Y-COOR allow this neuron to be placed in 2-dimentional space.  CXS contains the list of outgoing connections (of type t-cx) to other neurons."))
 
 (defclass t-layer ()
-  (:documentation "Describes a neural network layer.")
   ((neuron-array :accessor neuron-array :type vector)
    (layer-index :reader layer-index :initarg :layer-index :initform
                 (error ":layer-index required") :type integer)
@@ -37,7 +38,8 @@
    (neuron-count :accessor neuron-count :initarg :neuron-count
                  :initform (error ":neuron-count required") :type integer)
    (net :reader net :initarg :net :initform (error ":net required")
-        :type t-net)))
+        :type t-net)) 
+  (:documentation "Describes a neural network layer."))
 
 (defmethod initialize-instance :after ((layer t-layer) &key)
   (let ((size (+ (neuron-count layer)
@@ -74,7 +76,6 @@
     (if (< output 0) 0 output)))
 
 (defclass t-net ()
-  "Describes a standard multilayer, fully-connected backpropagation neural network."
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
    (learning-rate :reader learning-rate :initarg :learning-rate :initform 0.1)
@@ -82,12 +83,13 @@
    (wi :accessor wi :initform 0)
    (transfer-function :accessor transfer-function
                       :initarg :transfer-function
-                      :initform #'rectified-linear)
+                      :initform #'bound-sigmoid)
    (transfer-derivative :accessor transfer-derivative
                         :initarg :transfer-derivative
-                        :initform #'rectified-linear-derivative)
+                        :initform #'bound-sigmoid-derivative)
    (layers :accessor layers)
-   (next-id :accessor next-id :initform 0)))
+   (next-id :accessor next-id :initform 0))
+  (:documentation "Describes a standard multilayer, fully-connected backpropagation neural network."))
 
 (defmethod initialize-instance :after ((neuron t-neuron) &key)
   (setf (id neuron) (incf (next-id (net neuron)))))
@@ -283,20 +285,6 @@
   (format t "~a ~as i~a e~a~%" status elapsed iteration mse))
 
 (defgeneric train (t-net t-set &key)
-  (:documentation "This function uses the standard backprogation of
-  error method to train the neural network on the given sample set
-  within the given constraints. Training is achieved when the target
-  error reaches a level that is equal to or below the given target-mse
-  value, within the given number of iterations. The function returns t
-  if training is achieved and nil otherwise. If training is not
-  achieved, the caller can call again to train for additional
-  iterations. If randomize-weights is set to true, then the function
-  starts training from scratch. This function accepts callback
-  parameters that allow the function to periodically report on the
-  progress of training. t-net is a list of alternating input and
-  output lists, where each input/output list pair represents a single
-  training vector.  Here's an example for the exclusive-or problem:
-  '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))")
   (:method ((net t-net)
             (t-set list)
             &key 
@@ -360,7 +348,10 @@
                             :elapsed elapsed
                             :iteration i
                             :mse mse))
-                 (return (values (elapsed start-time) i mse status))))))
+                 (return (values (elapsed start-time) i mse status)))))
+  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true, then the function starts training from scratch. This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
+
+    '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))"))
 
 (defgeneric object-freeze (object stream)
   (:method ((net t-net) (s stream))
@@ -375,7 +366,6 @@
                collect (list (weight cx) (delta cx))))))
 
 (defun ann-freeze (net)
-  (declare (t-net net))
   (with-output-to-string (s) (object-freeze net s)))
 
 (defgeneric object-thaw (object stream)
@@ -424,9 +414,86 @@
          (setf (y-coor neuron) y))
     layer))
 
-(defun test ()
-  (let ((ann (make-instance 't-net :topology '(2 4 1)))
-        (t-set '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))))
-    (time (train ann t-set :target-mse 0.05 :randomize-weights t))
-    (loop for inputs in '(#(0 0) #(0 1) #(1 0) #(1 1)) do
-         (format t "~a => ~a~%" inputs (feed ann inputs)))))
+(defun read-data (net csv-file)
+  (let (tset)
+    (with-lines-in-file (row csv-file)
+      (when (not (zerop (length (trim row))))
+        (let* ((numbers (mapcar #'parse-number (split-n-trim row :on-regex ",")))
+               (inputs (subseq numbers 0 (car (topology net))))
+               (outputs (subseq numbers (car (topology net)))))
+          (push outputs tset)
+          (push inputs tset))))
+    tset))
+
+(defun evaluate-training (net test-set)
+  (let ((total 0.0)
+        (correct 0.0))
+    (loop for inputs = (pop test-set)
+       for outputs = (pop test-set)
+       while inputs do
+         (incf total)
+         (let ((targets (feed net inputs)))
+           (when (loop for output = (pop outputs)
+                    for target across targets
+                    always (or (and (>= target 0.5) (>= output 0.5))
+                               (and (< target 0.5) (< output 0.5))))
+             (incf correct)))
+       finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
+
+(defun train-n-test (&key
+                       (training-file
+                        (home-based "common-lisp/dc-ann/circle-training-data.csv"))
+                       (test-file
+                        (home-based "common-lisp/dc-ann/circle-test-data.csv"))
+                       (topology '(2 50 1))
+                       (learning-rate 0.1)
+                       (momentum 0.3)
+                       (transfer-function #'bound-sigmoid)
+                       (transfer-derivative #'bound-sigmoid-derivative)
+                       (trained-ann-file
+                        (home-based "common-lisp/dc-ann/circle-ann-frozen.dat"))
+                       (target-mse 0.05)
+                       (max-iterations 1000000)
+                       (randomize-weights '(:min -0.5 :max 0.5))
+                       (annealing nil))
+  (let* ((ann (make-instance 't-net
+                             :topology topology
+                             :learning-rate learning-rate
+                             :momentum momentum
+                             :transfer-function transfer-function
+                             :transfer-derivative transfer-derivative))
+         (t-set (read-data ann training-file)))
+    (let ((training-results (train ann t-set
+                                   :target-mse 0.05
+                                   :randomize-weights t
+                                   :max-iterations 100000
+                                   :annealing annealing)))
+      (spew (ann-freeze ann) trained-ann-file)
+      (list :trained-ann-file trained-ann-file
+            :ann-description (list :topology topology
+                                   :learning-rate learning-rate
+                                   :momentum momentum
+                                   :transfer-function transfer-function)
+            :training-parameters (list :training-file training-file
+                                       :test-file test-file
+                                       :target-mse target-mse
+                                       :max-iterations max-iterations
+                                       :randomize-weights randomize-weights
+                                       :annealing annealing)
+            :training-results training-results
+            :trained-ann-accuracy (evaluate-training 
+                                   ann (read-data ann test-file))))))
+
+(defun test-2 (training-file test-file)
+  (let* ((ann (make-instance 't-net :topology '(2 50 5 1)))
+         (training-set (read-data ann training-file))
+         (test-set (read-data ann test-file)))
+    (train ann training-set
+           :target-mse 0.05
+           :randomize-weights '(:min -0.5 :max 0.5)
+           ;; :rerandomize-weights t
+           :report-frequency 1000
+           :max-iterations 1000000
+           ;; :annealing 500
+           :logger-function (lambda (x) (format t "~a~%" x)))
+    (evaluate-training ann test-set)))
