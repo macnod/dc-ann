@@ -489,12 +489,9 @@
 
 (defun try-models (&key
                      (path (home-based "common-lisp/dc-ann"))
-                     (training-file
-                      (home-based "circle-training-data.csv"))
-                     (test-file
-                      (home-based "circle-training-data.csv"))
-                     (trained-ann-file
-                      (home-based "circle-ann-frozen.dat"))
+                     (training-file "circle-training-data.csv")
+                     (test-file "circle-training-data.csv")
+                     (trained-ann-file "circle-ann-frozen.dat")
                      ids
                      topologies
                      learning-rates
@@ -523,7 +520,7 @@
      for max-iterations in max-iterations-s
      for randomize-weights in randomize-weights-s
      for annealing in annealings
-     for taf = (format nil "~a-~a.~a" tafno id extension)
+     for taf = (join-paths path (format nil "~a-~a.~a" tafno id extension))
      collect
        (lambda ()
          (let ((result (train-n-test :training-file training-file
@@ -531,8 +528,8 @@
                                      :topology topology
                                      :learning-rate learning-rate
                                      :momentum momentum
-                                     :transfer-function transfer-function
-                                     :transfer-derivative transfer-derivative
+                                     ;; :transfer-function transfer-function
+                                     ;; :transfer-derivative transfer-derivative
                                      :trained-ann-file taf
                                      :target-mse target-mse
                                      :max-iterations max-iterations
@@ -542,8 +539,28 @@
              (push result *model-results*))
            nil))
      into job-queue
-     finally (return (thread-pool-start "try-models"
-                                        thread-count
+     finally (return (thread-pool-start :try-models
+                                        (min thread-count (length ids))
                                         job-queue
                                         (lambda (f) (funcall f))
                                         (lambda () (format t "All done!~%"))))))
+
+;; (try-models :ids '(1 2 3 4)
+;;             :topologies '((2 20 10 5 1)
+;;                           (2 100 1)
+;;                           (2 32 8 2 1)
+;;                           (2 30 1))
+;;             :learning-rates '(0.1 0.1 0.1 0.1)
+;;             :momenti '(0.3 0.3 0.3 0.3)
+;;             :transfer-functions '(#'bound-sigmoid 
+;;                                   #'bound-sigmoid
+;;                                   #'bound-sigmoid
+;;                                   #'bound-sigmoid)
+;;             :transfer-derivatives '(#'bound-sigmoid-derivative
+;;                                     #'bound-sigmoid-derivative
+;;                                     #'bound-sigmoid-derivative
+;;                                     #'bound-sigmoid-derivative)
+;;             :target-mses '(0.05 0.05 0.05 0.05)
+;;             :max-iterations-s '(1000000 1000000 1000000 1000000)
+;;             :randomize-weights-s '(:min -0.5 :max 0.5)
+;;             :annealings '(nil nil nil nil))
