@@ -484,16 +484,66 @@
             :trained-ann-accuracy (evaluate-training 
                                    ann (read-data ann test-file))))))
 
-(defun test-2 (training-file test-file)
-  (let* ((ann (make-instance 't-net :topology '(2 50 5 1)))
-         (training-set (read-data ann training-file))
-         (test-set (read-data ann test-file)))
-    (train ann training-set
-           :target-mse 0.05
-           :randomize-weights '(:min -0.5 :max 0.5)
-           ;; :rerandomize-weights t
-           :report-frequency 1000
-           :max-iterations 1000000
-           ;; :annealing 500
-           :logger-function (lambda (x) (format t "~a~%" x)))
-    (evaluate-training ann test-set)))
+(defparameter *model-results* nil)
+(defparameter *model-results-mutex* nil)
+
+(defun try-models (&key
+                     (path (home-based "common-lisp/dc-ann"))
+                     (training-file
+                      (home-based "circle-training-data.csv"))
+                     (test-file
+                      (home-based "circle-training-data.csv"))
+                     (trained-ann-file
+                      (home-based "circle-ann-frozen.dat"))
+                     ids
+                     topologies
+                     learning-rates
+                     momenti
+                     transfer-functions
+                     transfer-derivatives
+                     target-mses
+                     max-iterations-s
+                     randomize-weights-s
+                     annealings
+                     (thread-count 8))
+  (setf *model-results* nil)
+  (setf *model-results-mutex*
+        (make-mutex :name (format nil "model-results-~a" (unique-name))))
+  (loop with training-file = (join-paths path training-file)
+     with test-file = (join-paths path test-file)
+     with extension = (file-extension trained-ann-file)
+     with tafno = (replace-extension trained-ann-file extension)
+     for id in ids
+     for topology in topologies
+     for learning-rate in learning-rates
+     for momentum in momenti
+     for transfer-function in transfer-functions
+     for transfer-derivative in transfer-derivatives
+     for target-mse in target-mses
+     for max-iterations in max-iterations-s
+     for randomize-weights in randomize-weights-s
+     for annealing in annealings
+     for taf = (format nil "~a-~a.~a" tafno id extension)
+     collect
+       (lambda ()
+         (let ((result (train-n-test :training-file training-file
+                                     :test-file test-file
+                                     :topology topology
+                                     :learning-rate learning-rate
+                                     :momentum momentum
+                                     :transfer-function transfer-function
+                                     :transfer-derivative transfer-derivative
+                                     :trained-ann-file taf
+                                     :target-mse target-mse
+                                     :max-iterations max-iterations
+                                     :randomize-weights randomize-weights
+                                     :annealing annealing)))
+           (with-mutex (*model-results-mutex*)
+             (push result *model-results*))
+           nil))
+     into job-queue
+     finally (return (thread-pool-start "try-models"
+                                        thread-count
+                                        job-queue
+                                        (lambda (f) (funcall f))
+                                        (lambda () (format t "All done!~%"))))))
