@@ -462,7 +462,9 @@
                              :momentum momentum
                              :transfer-function transfer-function
                              :transfer-derivative transfer-derivative))
-         (t-set (read-data ann training-file)))
+         (t-set (read-data ann training-file))
+         (mark (unique-name))
+         (mark-time mark))
     (let ((training-results (train ann t-set
                                    :target-mse 0.05
                                    :randomize-weights t
@@ -481,17 +483,25 @@
                                        :randomize-weights randomize-weights
                                        :annealing annealing)
             :training-results training-results
+            :training-time (elapsed-time mark)
             :trained-ann-accuracy (evaluate-training 
                                    ann (read-data ann test-file))))))
 
 (defparameter *model-results* nil)
 (defparameter *model-results-mutex* nil)
 
+(defun next-parameter-item (parameter index)
+  (when parameter
+    (if (atom parameter)
+        parameter
+        (elt parameter index))))
+
 (defun try-models (&key
                      (path (home-based "common-lisp/dc-ann"))
                      (training-file "circle-training-data.csv")
-                     (test-file "circle-training-data.csv")
+                     (test-file "circle-test-data.csv")
                      (trained-ann-file "circle-ann-frozen.dat")
+                     (results-file "circle-results.dat")
                      ids
                      topologies
                      learning-rates
@@ -502,65 +512,69 @@
                      max-iterations-s
                      randomize-weights-s
                      annealings
-                     (thread-count 8))
+                     (thread-count 2))
+  (when *model-results-mutex*
+    (return-from try-models  "try-models is already running"))
   (setf *model-results* nil)
   (setf *model-results-mutex*
         (make-mutex :name (format nil "model-results-~a" (unique-name))))
   (loop with training-file = (join-paths path training-file)
      with test-file = (join-paths path test-file)
      with extension = (file-extension trained-ann-file)
-     with tafno = (replace-extension trained-ann-file extension)
+     with tafno = (replace-extension trained-ann-file "")
+     with results-file = (join-paths path results-file)
      for id in ids
-     for topology in topologies
-     for learning-rate in learning-rates
-     for momentum in momenti
-     for transfer-function in transfer-functions
-     for transfer-derivative in transfer-derivatives
-     for target-mse in target-mses
-     for max-iterations in max-iterations-s
-     for randomize-weights in randomize-weights-s
-     for annealing in annealings
+     for index = 0 then (1+ index)
+     for topology = (next-parameter-item topologies index)
+     for learning-rate = (next-parameter-item learning-rates index)
+     for momentum = (next-parameter-item momenti index)
+     for transfer-function = (next-parameter-item transfer-functions index)
+     for transfer-derivative = (next-parameter-item transfer-derivatives index)
+     for target-mse = (next-parameter-item target-mses index)
+     for max-iterations = (next-parameter-item max-iterations-s index)
+     for randomize-weights = (when randomize-weights-s
+                               (if (or (atom randomize-weights-s)
+                                       (member (car randomize-weights-s)
+                                               '(:min :max)))
+                                   randomize-weights-s
+                                   (elt randomize-weights-s index)))
+     for annealing = (next-parameter-item annealings index)
      for taf = (join-paths path (format nil "~a-~a.~a" tafno id extension))
      collect
-       (lambda ()
-         (let ((result (train-n-test :training-file training-file
+       (loop with parameters = (list :training-file training-file
                                      :test-file test-file
                                      :topology topology
                                      :learning-rate learning-rate
                                      :momentum momentum
-                                     ;; :transfer-function transfer-function
-                                     ;; :transfer-derivative transfer-derivative
+                                     :transfer-function transfer-function
+                                     :transfer-derivative transfer-derivative
                                      :trained-ann-file taf
                                      :target-mse target-mse
                                      :max-iterations max-iterations
                                      :randomize-weights randomize-weights
-                                     :annealing annealing)))
-           (with-mutex (*model-results-mutex*)
-             (push result *model-results*))
-           nil))
+                                     :annealing annealing)
+          for (key value) on parameters by #'cddr
+          unless (null value)
+          appending (list key value))
      into job-queue
-     finally (return (thread-pool-start :try-models
-                                        (min thread-count (length ids))
-                                        job-queue
-                                        (lambda (f) (funcall f))
-                                        (lambda () (format t "All done!~%"))))))
+     finally
+       (return (thread-pool-start 
+                :try-models
+                (min thread-count (length ids))
+                job-queue
+                (lambda (standard-output job)
+                  (let* ((*standard-output* standard-output)
+                         (result (apply #'train-n-test job)))
+                    (with-mutex (*model-results-mutex*)
+                      (push result *model-results*)
+                      (freeze-n-spew *model-results* results-file)
+                    nil))
+                (lambda (standard-output)
+                  (let* ((*standard-output* standard-output))
+                    (setf *model-results-mutex* nil)
+                    (format t "All done!~%"))))))))
 
-;; (try-models :ids '(1 2 3 4)
-;;             :topologies '((2 20 10 5 1)
-;;                           (2 100 1)
-;;                           (2 32 8 2 1)
-;;                           (2 30 1))
-;;             :learning-rates '(0.1 0.1 0.1 0.1)
-;;             :momenti '(0.3 0.3 0.3 0.3)
-;;             :transfer-functions '(#'bound-sigmoid 
-;;                                   #'bound-sigmoid
-;;                                   #'bound-sigmoid
-;;                                   #'bound-sigmoid)
-;;             :transfer-derivatives '(#'bound-sigmoid-derivative
-;;                                     #'bound-sigmoid-derivative
-;;                                     #'bound-sigmoid-derivative
-;;                                     #'bound-sigmoid-derivative)
-;;             :target-mses '(0.05 0.05 0.05 0.05)
-;;             :max-iterations-s '(1000000 1000000 1000000 1000000)
-;;             :randomize-weights-s '(:min -0.5 :max 0.5)
-;;             :annealings '(nil nil nil nil))
+(defun stop-try-models ()
+  (thread-pool-stop :try-models)
+  (setf *model-results-mutex* nil))
+
