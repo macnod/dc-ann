@@ -9,8 +9,8 @@
 (defclass t-cx ()
   ((target :reader target :initarg :target :initform (error ":neuron required")
            :type t-neuron)
-   (weight :accessor weight :initarg :weight :initform 1.0 :type float)
-   (delta :accessor delta :initform 0.0 :type float))
+   (weight :accessor weight :initarg :weight :initform 1.0 :type real)
+   (delta :accessor delta :initform 0.0 :type real))
   (:documentation "Describes a neural connection to TARGET neuron.  WEIGHT represents the strength of the connection and DELTA contains the last change in WEIGHT.  TARGET is required."))
 
 
@@ -21,11 +21,11 @@
           :type integer)
    (biased :reader biased :initarg :biased :initform nil :type boolean)
    (id :accessor id :type integer)
-   (input :accessor input :initform 0.0 :type float)
-   (output :accessor output :initform 0.0 :type float)
-   (err :accessor err :initform 0.0 :type float)
-   (x-coor :accessor x-coor :initform 0.0 :type float)
-   (y-coor :accessor y-coor :initform 0.0 :type float)
+   (input :accessor input :initform 0.0 :type real)
+   (output :accessor output :initform 0.0 :type real)
+   (err :accessor err :initform 0.0 :type real)
+   (x-coor :accessor x-coor :initform 0.0 :type real)
+   (y-coor :accessor y-coor :initform 0.0 :type real)
    (cxs :accessor cxs :initform nil :type list))
   (:documentation "Describes a neuron.  NET, required, is an object of type t-net that represents the neural network that this neuron is a part of.  LAYER, required, is an object of type t-layer that represents the neural network layer that this neuron belongs to.  If BIASED is true, the neuron will not have incoming connections.  ID is a distinct integer that identifies the neuron. X-COOR and Y-COOR allow this neuron to be placed in 2-dimentional space.  CXS contains the list of outgoing connections (of type t-cx) to other neurons."))
 
@@ -237,7 +237,7 @@
 
 (defgeneric randomize-weights (object &key)
   (:method ((neuron t-neuron) &key max min)
-    (declare (float max min))
+    (declare (real max min))
     (if (= max min)
         (loop for cx in (cxs neuron) do
              (setf (weight cx) max)
@@ -247,28 +247,28 @@
              (setf (delta cx) 0)))
     neuron)
   (:method ((layer t-layer) &key max min)
-    (declare (float max min))
+    (declare (real max min))
     (loop for neuron across (neuron-array layer)
        do (randomize-weights neuron :max max :min min))
     layer)
   (:method ((net t-net) &key (max 0.25) (min (- max)))
-    (declare (float max min))
+    (declare (real max min))
     (loop for layer in (layers net) do
          (randomize-weights layer :max max :min min))
     net))
 
 (defgeneric anneal (object variance)
-  (:method ((neuron t-neuron) (variance float))
+  (:method ((neuron t-neuron) (variance real))
     (loop for cx in (cxs neuron)
        do (setf (weight cx)
                 (+ (weight cx)
                    (/ (* (weight cx) (random variance)) 2)))
        finally (return neuron)))
-  (:method ((layer t-layer) (variance float))
+  (:method ((layer t-layer) (variance real))
     (loop for neuron across (neuron-array layer)
        do (anneal neuron variance)
        finally (return layer)))
-  (:method ((net t-net) (variance float))
+  (:method ((net t-net) (variance real))
     (loop for layer in (layers net)
          do (anneal layer variance)
          finally (return net))))
@@ -277,12 +277,24 @@
 (defun elapsed (start-time)
   (- (get-universal-time) start-time))
 
-(defun default-report-function (&key elapsed iteration mse)
-  (format t "~as i~a e~a~%" elapsed iteration mse))
+(defun default-report-function (&key file elapsed iteration mse)
+  (with-open-file (stream file :direction :output
+                          :if-exists :append
+                          :if-does-not-exist :create)
+  (format stream "~as i~a e~a~%" elapsed iteration mse)))
 
-(defun default-status-function (&key net status elapsed iteration mse)
+(defun default-status-function (&key file net status elapsed iteration mse)
   (declare (ignore net))
-  (format t "~a ~as i~a e~a~%" status elapsed iteration mse))
+  (with-open-file (stream file :direction :output
+                          :if-exists :append
+                          :if-does-not-exist :create)
+    (format stream "~a ~as i~a e~a~%" status elapsed iteration mse)))
+
+(defun default-logger-function (file message)
+  (with-open-file (stream file :direction :output
+                          :if-exists :append
+                          :if-does-not-exist :create)
+    (format stream "~a~%" message)))
 
 (defgeneric train (t-net t-set &key)
   (:method ((net t-net)
@@ -296,14 +308,16 @@
               (logger-function nil)
               (randomize-weights nil)
               (annealing nil)
-              (rerandomize-weights nil))
-    (declare (float target-mse)
+              (rerandomize-weights nil)
+              (log-file "/tmp/training.log"))
+    (declare (real target-mse)
              (integer max-iterations report-frequency)
              (function report-function status-function))
     (loop
        initially
          (when status-function
            (funcall status-function
+                    :file log-file
                     :net net :status "learning" :elapsed 0 :iteration 0
                     :mse 1.0))
          (when randomize-weights
@@ -334,15 +348,18 @@
                  (or (not last-report-time)
                      (>= (- (get-internal-real-time) last-report-time) rf)))
        do (funcall report-function
+                   :file log-file
                    :elapsed (elapsed start-time) :iteration i :mse mse)
          (setf last-report-time (get-internal-real-time))
        finally (let ((elapsed (elapsed start-time))
                      (status (if (> mse target-mse) "maxi" "target")))
                  (when report-function
                    (funcall report-function
+                            :file log-file
                             :elapsed elapsed :iteration i :mse mse))
                  (when status-function
                    (funcall status-function
+                            :file log-file
                             :net net
                             :status status
                             :elapsed elapsed
@@ -394,7 +411,7 @@
             (height 100.0)
             (h-margin 20.0)
             (v-margin 20.0))
-    (declare (float width height h-margin v-margin))
+    (declare (real width height h-margin v-margin))
     (let* ((c-width (- width (* h-margin 2)))
            (v-delta (/ (- height (* v-margin 2))
                               (1- (length (layers net))))))
@@ -405,7 +422,7 @@
          do (layout-neurons layer :y y :delta h-delta :margin h-margin)))
     net)
   (:method ((layer t-layer) &key y delta margin)
-    (declare (float y delta margin))
+    (declare (real y delta margin))
     (loop
        for neuron across (neuron-array layer)
        for x = (+ margin (/ delta 2)) then (+ x delta)
