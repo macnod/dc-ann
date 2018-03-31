@@ -68,6 +68,13 @@
   (declare (t-neuron neuron))
   (* (output neuron) (- 1 (output neuron))))
 
+(defun sigmoid (neuron)
+  (/ 1.0 (1+ (exp (- (input neuron))))))
+
+(defun sigmoid-derivative (neuron)
+  (let ((output (output neuron)))
+    (* output (- 1 output))))
+
 (defun rectified-linear (neuron)
   (max 0 (input neuron)))
 
@@ -83,10 +90,10 @@
    (wi :accessor wi :initform 0)
    (transfer-function :accessor transfer-function
                       :initarg :transfer-function
-                      :initform #'bound-sigmoid)
+                      :initform #'sigmoid)
    (transfer-derivative :accessor transfer-derivative
                         :initarg :transfer-derivative
-                        :initform #'bound-sigmoid-derivative)
+                        :initform #'sigmoid-derivative)
    (layers :accessor layers)
    (next-id :accessor next-id :initform 0))
   (:documentation "Describes a standard multilayer, fully-connected backpropagation neural network."))
@@ -365,7 +372,10 @@
                             :elapsed elapsed
                             :iteration i
                             :mse mse))
-                 (return (values (elapsed start-time) i mse status)))))
+                 (return (list :elapsed (elapsed start-time)
+                               :iterations i
+                               :error mse
+                               :status status)))))
   (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true, then the function starts training from scratch. This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
 
     '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))"))
