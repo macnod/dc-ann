@@ -58,29 +58,46 @@
 
 (defun bound-sigmoid (neuron)
   (declare (t-neuron neuron))
-  (let ((input (input neuron)))
-    (cond
-      ((> input 50.0) 1.0)
-      ((< input -50.0) 0.0)
-      (t (/ 1.0 (1+ (exp (- input))))))))
+  (let ((output (/ 1.0 (1+ (exp (- (input neuron)))))))
+    (cond ((> output 50.0) 50.0)
+          ((< output -50.0) -50.0)
+          (t output))))
 
 (defun bound-sigmoid-derivative (neuron)
   (declare (t-neuron neuron))
   (* (output neuron) (- 1 (output neuron))))
 
 (defun sigmoid (neuron)
+  (declare (t-neuron neuron))
   (/ 1.0 (1+ (exp (- (input neuron))))))
 
 (defun sigmoid-derivative (neuron)
+  (declare (t-neuron neuron))
   (let ((output (output neuron)))
     (* output (- 1 output))))
 
 (defun rectified-linear (neuron)
+  (declare (t-neuron neuron))
   (max 0 (input neuron)))
 
 (defun rectified-linear-derivative (neuron)
+  (declare (t-neuron neuron))
   (let ((output (output neuron)))
     (if (< output 0) 0 output)))
+
+(defun transfer-functions (name function-or-derivative)
+  (ds-get (ds `(:map :bound-sigmoid
+                     (:map :function ,#'bound-sigmoid
+                           :derivative ,#'bound-sigmoid-derivative)
+
+                     :sigmoid
+                     (:map :function ,#'sigmoid
+                           :derivative ,#'sigmoid-derivative)
+
+                     :rectified-linear
+                     (:map :function ,#'rectified-linear
+                           :derivative ,#'rectified-linear-derivative)))
+          name function-or-derivative))
 
 (defclass t-net ()
   ((topology :reader topology :initarg :topology
@@ -88,14 +105,23 @@
    (learning-rate :reader learning-rate :initarg :learning-rate :initform 0.1)
    (momentum :reader momentum :initarg :momentum :initform 0.3)
    (wi :accessor wi :initform 0)
-   (transfer-function :accessor transfer-function
-                      :initarg :transfer-function
-                      :initform #'sigmoid)
-   (transfer-derivative :accessor transfer-derivative
-                        :initarg :transfer-derivative
-                        :initform #'sigmoid-derivative)
+   (transfer :accessor transfer :initarg :transfer-function :initform :sigmoid)
+   (transfer-function :accessor transfer-function :initform nil)
+   (transfer-derivative :accessor transfer-derivative :initform nil)
    (layers :accessor layers)
-   (next-id :accessor next-id :initform 0))
+   (next-id :accessor next-id :initform 0)
+   (min-mse :accessor min-mse :type real :initform 1000000.0)
+   (max-mse :accessor max-mse :type real :initform -1000000.0)
+   (mse-list :accessor mse-list :type list :initform nil)
+   (id :reader id :initarg :id :type string :initform (unique-name))
+   (log-file :accessor log-file :type string :initform nil)
+   (last-anneal-iteration :accessor last-anneal-iteration
+                          :type integer
+                          :initform 0)
+   (randomize :accessor randomize :type boolean :initform nil)
+   (anneal :accessor anneal :type boolean :initform nil)
+   (stop-training :accessor stop-training :type boolean :initform nil)
+   (shock :accessor shock :type boolean :initform nil))
   (:documentation "Describes a standard multilayer, fully-connected backpropagation neural network."))
 
 (defmethod initialize-instance :after ((neuron t-neuron) &key)
@@ -136,6 +162,10 @@
   net)
 
 (defmethod initialize-instance :after ((net t-net) &key)
+  (setf (transfer-function net)
+        (transfer-functions (transfer net) :function))
+  (setf (transfer-derivative net)
+        (transfer-functions (transfer net) :derivative))
   (setf (layers net)
         (loop for layer-spec in (topology net)
            for layer-index = 0 then (1+ layer-index)
@@ -203,12 +233,10 @@
     net))
 
 (defmethod output-layer-error ((net t-net) (outputs vector))
-  (sqrt (loop for neuron across (neuron-array (output-layer net))
-           for neuron-index from 0 below (length outputs)
-           summing (let ((err (- (aref outputs neuron-index) (output neuron))))
-                     (setf (err neuron)
-                           (* err (funcall (transfer-derivative net) neuron)))
-                     (* err err)))))
+  (loop for neuron across (neuron-array (output-layer net))
+     for neuron-index from 0 below (length outputs)
+     summing (let ((err (- (aref outputs neuron-index) (output neuron))))
+               (setf (err neuron) (* 1/2 (expt err 2))))))
 
 (defmethod learn-vector ((inputs vector) (outputs vector) (net t-net))
   (feed net inputs)
@@ -264,7 +292,7 @@
          (randomize-weights layer :max max :min min))
     net))
 
-(defgeneric anneal (object variance)
+(defgeneric anneal-weights (object variance)
   (:method ((neuron t-neuron) (variance real))
     (loop for cx in (cxs neuron)
        do (setf (weight cx)
@@ -273,35 +301,100 @@
        finally (return neuron)))
   (:method ((layer t-layer) (variance real))
     (loop for neuron across (neuron-array layer)
-       do (anneal neuron variance)
+       do (anneal-weights neuron variance)
        finally (return layer)))
   (:method ((net t-net) (variance real))
     (loop for layer in (layers net)
-         do (anneal layer variance)
+         do (anneal-weights layer variance)
          finally (return net))))
 
 
 (defun elapsed (start-time)
   (- (get-universal-time) start-time))
 
-(defun default-report-function (&key file elapsed iteration mse)
-  (with-open-file (stream file :direction :output
+(defun default-report-function (&key net elapsed iteration mse)
+  (when (> mse (max-mse net)) (setf (max-mse net) mse))
+  (when (< mse (min-mse net)) (setf (min-mse net) mse))
+  (push (list iteration mse) (mse-list net))
+  (with-open-file (stream (log-file net) :direction :output
                           :if-exists :append
                           :if-does-not-exist :create)
-  (format stream "~as i~a e~a~%" elapsed iteration mse)))
+    (write-log-entry stream
+                     (format nil "~a ~a ~a ~a ~a"
+                             elapsed iteration
+                             mse (min-mse net) (max-mse net)))))
 
-(defun default-status-function (&key file net status elapsed iteration mse)
-  (declare (ignore net))
-  (with-open-file (stream file :direction :output
+(defun default-status-function (&key net status elapsed iteration mse)
+  (when (> mse (max-mse net)) (setf (max-mse net) mse))
+  (when (< mse (min-mse net)) (setf (min-mse net) mse))
+  (push (list iteration mse) (mse-list net))
+  (with-open-file (stream (log-file net) :direction :output
                           :if-exists :append
                           :if-does-not-exist :create)
-    (format stream "~a ~as i~a e~a~%" status elapsed iteration mse)))
+    (write-log-entry stream
+                     (format nil "~a ~a ~a ~a ~a ~a"
+                             status elapsed iteration
+                             mse (min-mse net) (max-mse net)))))
 
-(defun default-logger-function (file message)
-  (with-open-file (stream file :direction :output
+(defun default-logger-function (net message)
+  (with-open-file (stream (log-file net) :direction :output
                           :if-exists :append
                           :if-does-not-exist :create)
-    (format stream "~a~%" message)))
+    (write-log-entry stream message)))
+
+(defun initialize-training (net
+                            log-file
+                            status-function
+                            randomize-weights)
+  (setf (log-file net)
+        (if log-file
+            log-file
+            (format nil "/tmp/training-~a.log" (id net))))
+  (setf (max-mse net) -1000000.0)
+  (setf (min-mse net) 1000000.0)
+  (setf (last-anneal-iteration net) 0)
+  (setf (anneal net) nil)
+  (setf (randomize net) nil)
+  (setf (stop-training net) nil)
+  (setf (shock net) nil)
+  (when status-function
+    (funcall status-function
+             :net net
+             :status "learning"
+             :elapsed 0
+             :iteration 0
+             :mse 1.0))
+  (when randomize-weights
+    (if (listp randomize-weights)
+        (apply #'randomize-weights (cons net randomize-weights))
+        (randomize-weights net))
+    (setf (mse-list net) nil)))
+
+(defun shock-weights (net
+                      mse
+                      rerandomize-weights
+                      randomize-weights
+                      logger-function
+                      annealing
+                      i)
+  (when (or (and (> mse 0.999) rerandomize-weights)
+            (shock net))
+    (if (listp randomize-weights)
+        (apply #'randomize-weights (cons net randomize-weights))
+        (randomize-weights net))
+    (when logger-function
+      (funcall logger-function net "randomized weights")))
+  (when (and annealing
+             (or (shock net)
+                 (> (- i (last-anneal-iteration net))
+                    annealing)))
+    (anneal-weights net 0.1)
+    (setf (last-anneal-iteration net) i)
+    (when logger-function
+      (funcall logger-function "annealed weights")))
+  (setf (randomize net) nil)
+  (setf (anneal net) nil)
+  (setf (shock net) nil))
 
 (defgeneric train (t-net t-set &key)
   (:method ((net t-net)
@@ -312,70 +405,64 @@
               (report-frequency 1000)
               (report-function #'default-report-function)
               (status-function #'default-status-function)
-              (logger-function nil)
+              (logger-function #'default-logger-function)
               (randomize-weights nil)
               (annealing nil)
               (rerandomize-weights nil)
-              (log-file "/tmp/training.log"))
+              (log-file nil))
     (declare (real target-mse)
              (integer max-iterations report-frequency)
              (function report-function status-function))
-    (loop
-       initially
-         (when status-function
-           (funcall status-function
-                    :file log-file
-                    :net net :status "learning" :elapsed 0 :iteration 0
-                    :mse 1.0))
-         (when randomize-weights
-           (if (listp randomize-weights)
-               (apply #'randomize-weights (cons net randomize-weights))
-               (randomize-weights net)))
-       with start-time = (get-universal-time)
-       with last-report-time
-       with last-anneal-iteration = 0
-       with rf = (* (/ report-frequency 1000)
-                    internal-time-units-per-second)
-       for i from 1 to max-iterations
-       for mse = 1.0 then (present-vectors net t-set)
-       while (> mse target-mse)
-       when (and (> i 1) (> mse 0.80) (or rerandomize-weights annealing)) do
-         (when (and (> mse 0.999) rerandomize-weights)
-           (if (listp randomize-weights)
-               (apply #'randomize-weights (cons net randomize-weights))
-               (randomize-weights net))
-           (when logger-function
-             (funcall logger-function "randomized weights")))
-         (when (and annealing (> (- i last-anneal-iteration) annealing))
-           (anneal net 0.1)
-           (setf last-anneal-iteration i)
-           (when logger-function
-             (funcall logger-function "annealed weights")))
-       when (and report-function
-                 (or (not last-report-time)
-                     (>= (- (get-internal-real-time) last-report-time) rf)))
-       do (funcall report-function
-                   :file log-file
-                   :elapsed (elapsed start-time) :iteration i :mse mse)
-         (setf last-report-time (get-internal-real-time))
-       finally (let ((elapsed (elapsed start-time))
-                     (status (if (> mse target-mse) "maxi" "target")))
-                 (when report-function
-                   (funcall report-function
-                            :file log-file
-                            :elapsed elapsed :iteration i :mse mse))
-                 (when status-function
-                   (funcall status-function
-                            :file log-file
-                            :net net
-                            :status status
-                            :elapsed elapsed
-                            :iteration i
-                            :mse mse))
-                 (return (list :elapsed (elapsed start-time)
-                               :iterations i
-                               :error mse
-                               :status status)))))
+    (make-thread
+     (lambda ()
+       (loop
+          initially (initialize-training net
+                                         log-file
+                                         status-function
+                                         randomize-weights)
+          with start-time = (get-universal-time)
+          with last-report-time
+          with rf = (* (/ report-frequency 1000)
+                       internal-time-units-per-second)
+          for i from 1 to max-iterations
+          for mse = 1.0 then (present-vectors net t-set)
+          while (and (> mse target-mse) (not (stop-training net)))
+          when (or
+                (and (> i 1) (> mse 0.80) (or rerandomize-weights annealing))
+                (randomize net)
+                (anneal net)
+                (shock net))
+          do (shock-weights net mse rerandomize-weights randomize-weights
+                            logger-function annealing i)
+          when (and report-function
+                    (or (not last-report-time)
+                        (>= (- (get-internal-real-time) last-report-time) rf)))
+          do (funcall report-function
+                      :net net
+                      :elapsed (elapsed start-time)
+                      :iteration i
+                      :mse mse)
+            (setf last-report-time (get-internal-real-time))
+          finally (let ((elapsed (elapsed start-time))
+                        (status (if (> mse target-mse) "maxi" "target")))
+                    (when report-function
+                      (funcall report-function
+                               :net net
+                               :elapsed elapsed
+                               :iteration i
+                               :mse mse))
+                    (when status-function
+                      (funcall status-function
+                               :net net
+                               :status status
+                               :elapsed elapsed
+                               :iteration i
+                               :mse mse))
+                    (return (list :elapsed (elapsed start-time)
+                                  :iterations i
+                                  :error mse
+                                  :status status)))))
+     :name (format nil "training-~a" (id net))))
   (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true, then the function starts training from scratch. This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
 
     '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))"))
@@ -588,7 +675,7 @@
        (return (thread-pool-start 
                 :try-models
                 (min thread-count (length ids))
-                job-queue
+                :job-queue
                 (lambda (standard-output job)
                   (let* ((*standard-output* standard-output)
                          (result (apply #'train-n-test job)))
