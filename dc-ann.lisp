@@ -136,6 +136,9 @@
 (defmethod input-layer ((net t-net))
   (car (layers net)))
 
+(defmethod get-neuron ((net t-net) (layer-index integer) (neuron-index integer))
+  (elt (neuron-array (elt (layers net) layer-index)) neuron-index))
+
 (defmethod transfer ((neuron t-neuron))
   (setf (output neuron)
         (if (eq (layer-type (layer neuron)) :input)
