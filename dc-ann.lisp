@@ -238,7 +238,7 @@
 (defmethod output-layer-error ((net t-net) (outputs vector))
   (loop for neuron across (neuron-array (output-layer net))
      for neuron-index from 0 below (length outputs)
-     summing (let ((err (- (aref outputs neuron-index) (output neuron))))
+     summing (let* ((err (- (aref outputs neuron-index) (output neuron)))
                (setf (err neuron) (* 1/2 (expt err 2))))))
 
 (defmethod learn-vector ((inputs vector) (outputs vector) (net t-net))
