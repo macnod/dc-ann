@@ -291,6 +291,7 @@
     ;; Return a vector with the output value of each output-layer neuron
     (map 'vector 'output (neuron-array (output-layer net)))))
 
+;; Current
 (defgeneric backprop (component)
   (:method ((neuron t-neuron))
     (let ((err (loop for cx in (cxs neuron)
