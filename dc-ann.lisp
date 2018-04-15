@@ -19,6 +19,7 @@
   ((net :reader net :initarg :net :initform (error ":net required") :type t-net)
    (layer :reader layer :initarg :layer :initform (error ":layer required")
           :type integer)
+   (layer-type :accessor layer-type :initarg :layer-type :initform nil)
    (biased :reader biased :initarg :biased :initform nil :type boolean)
    (id :accessor id :type integer)
    (input :accessor input :initform 0.0 :type real)
@@ -26,7 +27,9 @@
    (transfer-function :accessor transfer-function :initform nil)
    (transfer-derivative :accessor transfer-derivative :initform nil)
    (output :accessor output :initform 0.0 :type real)
+   (expected-output :accessor expected-output :initform 0.0 :type real)
    (err :accessor err :initform 0.0 :type real)
+   (derivative :accessor derivative :initform 0.0 :type real)
    (x-coor :accessor x-coor :initform 0.0 :type real)
    (y-coor :accessor y-coor :initform 0.0 :type real)
    (cxs :accessor cxs :initform nil :type list))
@@ -62,7 +65,8 @@
     (loop for a from 0 below size do
          (vector-push
           (make-instance 't-neuron
-                         :layer layer
+                         :layer (layer-index layer)
+                         :layer-type (layer-type layer)
                          :biased (and (not (equal (layer-type layer) :output))
                                       (= a (1- size)))
                          :net (net layer)
@@ -149,9 +153,10 @@
 
 (defmethod transfer ((neuron t-neuron))
   (setf (output neuron)
-        (if (eq (layer-type (layer neuron)) :input)
+        (if (eq (layer-type neuron) :input)
             (input neuron)
-            (funcall (transfer-function neuron) neuron)))
+            (setf (output neuron) (/ 1.0 (1+ (exp (- (input neuron))))))))
+            ;;(funcall (transfer-function neuron) neuron)))
   (setf (input neuron) (if (biased neuron) 1.0 0.0))
   neuron)
 
@@ -292,22 +297,56 @@
     (map 'vector 'output (neuron-array (output-layer net)))))
 
 ;; Current
+(defun backprop-output (neuron)
+  (loop 
+     with neuron-output = (output neuron)
+     with learning-rate = (learning-rate (net neuron))
+     with momentum = (momentum (net neuron))
+     for cx in (cxs neuron)
+     for target-neuron = (target cx)
+     for target-neuron-output = (output target-neuron)
+     for target-neuron-expected-output = (expected-output target-neuron)
+     for target-neuron-error = (- target-neuron-output
+                                  target-neuron-expected-output)
+     for derivative = (* target-neuron-output (- 1 target-neuron-output))
+     for delta = (* target-neuron-error derivative neuron-output)
+     do
+       (setf (err target-neuron) target-neuron-error)
+       (setf (derivative target-neuron) derivative)
+       (setf (weight cx) (+ (weight cx)
+                            (* learning-rate (- delta))
+                            (* momentum (- (delta cx)))))
+       (setf (delta cx) delta)))
+
+(defun backprop-hidden (neuron)
+  (loop
+     with dx = (loop
+                  for cx in (cxs neuron)
+                  for target-neuron = (target cx)
+                  for target-neuron-error = (err target-neuron)
+                  for target-neuron-derivative = (derivative target-neuron)
+                  summing (* target-neuron-error
+                             target-neuron-derivative
+                             (weight cx)))
+     with learning-rate = (learning-rate (net neuron))
+     with momentum = (momentum (net neuron))
+     for cx in (cxs neuron)
+     for target-neuron = (target cx)
+     for target-neuron-output = (output target-neuron)
+     for derivative = (* target-neuron-output (- 1 target-neuron-output))
+     for delta = (* dx derivative (weight cx))
+     do
+       (setf (derivative target-neuron) derivative)
+       (setf (weight cx) (+ (weight cx)
+                            (* learning-rate (- delta))
+                            (* momentum (- (delta cx)))))
+       (setf (delta cx) delta)))
+
 (defgeneric backprop (component)
   (:method ((neuron t-neuron))
-    (let ((err (loop for cx in (cxs neuron)
-                  summing (* (err (target cx)) (weight cx))))
-          (source-output (output neuron))
-          (learning-rate (learning-rate (net neuron)))
-          (momentum (momentum (net neuron))))
-      (setf (err neuron)
-            (if (eq (layer-type (layer neuron)) :input)
-                err
-                (* err (funcall (transfer-derivative neuron) neuron))))
-      (loop for cx in (cxs neuron) do
-           (setf (delta cx)
-                 (+ (* (err (target cx)) source-output learning-rate)
-                    (* (delta cx) momentum)))
-           (incf (weight cx) (delta cx))))
+    (if (= (1+ (layer neuron)) (layer-index (output-layer (net neuron))))
+        (backprop-output neuron)
+        (backprop-hidden neuron))
     neuron)
   (:method ((layer t-layer))
     (loop for neuron across (neuron-array layer) do (backprop neuron))
@@ -318,14 +357,12 @@
     net))
 
 (defmethod output-layer-error ((net t-net) (outputs vector))
-  (let ((e-total (loop for neuron across (neuron-array (output-layer net))
-                    for neuron-index from 0 below (length outputs)
-                    for target-output = (aref outputs neuron-index)
-                    summing
-                      (* 1/2 (expt (- target-output (output neuron)) 2)))))
-    (loop for neuron across (neuron-array (output-layer net))
-       do (setf (err neuron) e-total))
-    e-total))
+  (loop for neuron across (neuron-array (output-layer net))
+     for expected-output across outputs
+     for actual-output = (output neuron)
+     do (setf (expected-output neuron) expected-output)
+     summing
+       (* 0.5 (expt (- expected-output actual-output) 2))))
 
 (defmethod learn-vector ((inputs vector) (outputs vector) (net t-net))
   (feed net inputs)
