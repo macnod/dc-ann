@@ -52,8 +52,10 @@
                  :initform (error ":neuron-count required") :type integer)
    (transfer-tag :accessor transfer-tag :initarg :transfer-tag
                  :initform nil)
+   (next-layer :accessor next-layer :initarg :next-layer
+               :type 't-layer :initform nil)
    (net :reader net :initarg :net :initform (error ":net required")
-        :type t-net)) 
+        :type t-net))
   (:documentation "Describes a neural network layer."))
 
 (defmethod initialize-instance :after ((layer t-layer) &key)
@@ -192,6 +194,11 @@
               :neuron-count (elt (topology net) layer-index)
               :transfer-tag (transfer-tag net)
               :net net)))
+  (loop for layer in (layers net)
+     for next-layer = (if (eql (layer-type layer) :output)
+                          nil
+                          (elt (layers net) (1+ (layer-index layer))))
+     do (setf (next-layer layer) next-layer))
   (connect net))
 
 (defgeneric set-inputs (object inputs)
@@ -277,6 +284,9 @@
        do (incf (input (target cx)) (* (weight cx) (output neuron))))
     neuron)
   (:method ((layer t-layer))
+    (when (not (eql (layer-type layer) :output))
+      (loop for neuron across (neuron-array (next-layer layer))
+         do (setf (input neuron) 0.0)))
     (loop for neuron across (neuron-array layer) do (fire neuron))
     layer)
   (:method ((net t-net))
@@ -371,7 +381,7 @@
     err))
 
 (defun tset-list-to-tset-vectors (tset)
-  "Converts something like 
+  "Converts something like
      '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))
    into something like(output neuron
      #((#(0 0) #(1)) (#(0 1) #(0)) (#(1 0) #(0)) (#(1 1) #(1)))"
@@ -525,7 +535,7 @@
 (defgeneric train (t-net t-set &key)
   (:method ((net t-net)
             (t-set list)
-            &key 
+            &key
               (target-mse 0.08)
               (max-iterations 10000)
               (report-frequency 1000)
@@ -724,7 +734,7 @@
                                        :annealing annealing)
             :training-results training-results
             :training-time (elapsed-time mark)
-            :trained-ann-accuracy (evaluate-training 
+            :trained-ann-accuracy (evaluate-training
                                    ann (read-data ann test-file))))))
 
 (defparameter *model-results* nil)
@@ -798,7 +808,7 @@
           appending (list key value))
      into job-queue
      finally
-       (return (thread-pool-start 
+       (return (thread-pool-start
                 :try-models
                 (min thread-count (length ids))
                 :job-queue
@@ -817,4 +827,3 @@
 (defun stop-try-models ()
   (thread-pool-stop :try-models)
   (setf *model-results-mutex* nil))
-
