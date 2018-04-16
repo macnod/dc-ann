@@ -75,56 +75,51 @@
                          :transfer-tag (transfer-tag layer))
           (neuron-array layer)))))
 
-(defun bound-sigmoid (neuron)
-  (declare (t-neuron neuron))
+(defun bound-logistic (input)
   (let* ((limit 80)
-         (input (max (min (input neuron) limit) (- limit))))
-    (/ 1.0 (1+ (exp (- input))))))
+         (bound-input (max (min input limit) (- limit))))
+    (/ 1.0 (1+ (exp (- bound-input))))))
 
-(defun bound-sigmoid-derivative (neuron)
-  (declare (t-neuron neuron))
-  (let ((output (output neuron)))
-    (* output (- 1 output))))
+(defun bound-logistic-derivative (output)
+  (* output (- 1 output)))
 
-(defun sigmoid (neuron)
-  (declare (t-neuron neuron))
-  (/ 1.0 (1+ (exp (- (input neuron))))))
+(defun logistic (input)
+  (/ 1.0 (1+ (exp (- input)))))
 
-(defun sigmoid-derivative (neuron)
-  (declare (t-neuron neuron))
-  (let ((output (output neuron)))
-    (* output (- 1 output))))
+(defun logistic-derivative (output)
+  (* output (- 1 output)))
 
-(defun rectified-linear (neuron)
-  (declare (t-neuron neuron))
-  (max 0 (input neuron)))
+(defun relu (input)
+  (max 0 input))
 
-(defun rectified-linear-derivative (neuron)
-  (declare (t-neuron neuron))
-  (let ((output (output neuron)))
-    (if (< output 0) 0 output)))
+(defun relu-derivative (output)
+  (if (> output 0.0) 1.0 0.01))
 
 (defun transfer-functions (name function-or-derivative)
-  (ds-get (ds `(:map :bound-sigmoid
+  (ds-get (ds `(:map :bound-logistic
                      (:map :function ,#'bound-sigmoid
                            :derivative ,#'bound-sigmoid-derivative)
 
-                     :sigmoid
+                     :logistic
                      (:map :function ,#'sigmoid
                            :derivative ,#'sigmoid-derivative)
 
+                     :relu
+                     (:map :function ,#'relu
+                           :derivative ,#'relu-derivative)
+
                      :rectified-linear
-                     (:map :function ,#'rectified-linear
-                           :derivative ,#'rectified-linear-derivative)))
+                     (:map :function ,#'relu
+                           :derivative ,#'relu-derivative)))
           name function-or-derivative))
 
 (defclass t-net ()
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
-   (learning-rate :reader learning-rate :initarg :learning-rate :initform 0.1)
-   (momentum :reader momentum :initarg :momentum :initform 0.3)
+   (learning-rate :accessor learning-rate :initarg :learning-rate :initform 0.3)
+   (momentum :accessor momentum :initarg :momentum :initform 0.8)
    (wi :accessor wi :initform 0)
-   (transfer-tag :accessor transfer-tag :initarg :transfer-tag :initform :sigmoid)
+   (transfer-tag :accessor transfer-tag :initarg :transfer-tag :initform :logistic)
    (layers :accessor layers)
    (next-id :accessor next-id :initform 0)
    (min-mse :accessor min-mse :type real :initform 1000000.0)
@@ -155,11 +150,7 @@
 
 (defmethod transfer ((neuron t-neuron))
   (setf (output neuron)
-        (if (eq (layer-type neuron) :input)
-            (input neuron)
-            (setf (output neuron) (/ 1.0 (1+ (exp (- (input neuron))))))))
-            ;;(funcall (transfer-function neuron) neuron)))
-  (setf (input neuron) (if (biased neuron) 1.0 0.0))
+        (funcall (transfer-function neuron) (input neuron)))
   neuron)
 
 (defmethod connect ((net t-net))
@@ -309,48 +300,23 @@
 ;; Current
 (defun backprop-output (neuron)
   (loop 
-     with neuron-output = (output neuron)
-     with learning-rate = (learning-rate (net neuron))
-     with momentum = (momentum (net neuron))
      for cx in (cxs neuron)
      for target-neuron = (target cx)
-     for target-neuron-output = (output target-neuron)
-     for target-neuron-expected-output = (expected-output target-neuron)
-     for target-neuron-error = (- target-neuron-output
-                                  target-neuron-expected-output)
-     for derivative = (* target-neuron-output (- 1 target-neuron-output))
-     for delta = (* target-neuron-error derivative neuron-output)
-     do
-       (setf (err target-neuron) target-neuron-error)
-       (setf (derivative target-neuron) derivative)
-       (setf (weight cx) (+ (weight cx)
-                            (* learning-rate (- delta))
-                            (* momentum (- (delta cx)))))
-       (setf (delta cx) delta)))
+     do (setf (err target-neuron)
+              (* (- (expected-output target-neuron)
+                    (output target-neuron))
+                 (funcall (transfer-derivative target-neuron)
+                          (output target-neuron))))))
 
 (defun backprop-hidden (neuron)
   (loop
-     with dx = (loop
-                  for cx in (cxs neuron)
-                  for target-neuron = (target cx)
-                  for target-neuron-error = (err target-neuron)
-                  for target-neuron-derivative = (derivative target-neuron)
-                  summing (* target-neuron-error
-                             target-neuron-derivative
-                             (weight cx)))
-     with learning-rate = (learning-rate (net neuron))
-     with momentum = (momentum (net neuron))
      for cx in (cxs neuron)
      for target-neuron = (target cx)
-     for target-neuron-output = (output target-neuron)
-     for derivative = (* target-neuron-output (- 1 target-neuron-output))
-     for delta = (* dx derivative (weight cx))
-     do
-       (setf (derivative target-neuron) derivative)
-       (setf (weight cx) (+ (weight cx)
-                            (* learning-rate (- delta))
-                            (* momentum (- (delta cx)))))
-       (setf (delta cx) delta)))
+     do (setf (err target-neuron)
+              (* (loop for cx in (cxs target-neuron)
+                    summing (* (weight cx) (err (target cx))))
+                 (funcall (transfer-derivative target-neuron)
+                          (output target-neuron))))))
 
 (defgeneric backprop (component)
   (:method ((neuron t-neuron))
@@ -366,18 +332,37 @@
        do (backprop layer))
     net))
 
+(defgeneric update-weights (component)
+  (:method ((neuron t-neuron))
+    (loop
+       with learning-rate = (learning-rate (net neuron))
+       with momentum = (momentum (net neuron))
+       with output = (output neuron)
+       for cx in (cxs neuron)
+       for delta = (* learning-rate (err (target cx)) output)
+       do (incf (weight cx) (+ delta (* momentum (delta cx))))))
+  (:method ((layer t-layer))
+    (loop for neuron across (neuron-array layer)
+       do (update-weights neuron)))
+  (:method ((net t-net))
+    (loop for layer in (layers net) 
+       do (update-weights layer))))
+
 (defmethod output-layer-error ((net t-net) (outputs vector))
   (loop for neuron across (neuron-array (output-layer net))
      for expected-output across outputs
      for actual-output = (output neuron)
      do (setf (expected-output neuron) expected-output)
      summing
-       (* 0.5 (expt (- expected-output actual-output) 2))))
+       (* 0.5 (expt (- expected-output actual-output) 2))
+     into error
+     finally (return (sqrt error))))
 
 (defmethod learn-vector ((inputs vector) (outputs vector) (net t-net))
   (feed net inputs)
   (let ((err (output-layer-error net outputs)))
     (backprop net)
+    (update-weights net)
     err))
 
 (defun tset-list-to-tset-vectors (tset)
@@ -394,7 +379,6 @@
   (:method ((net t-net) (t-set list))
     (loop
        with vec = (tset-list-to-tset-vectors t-set)
-       with max-error = 0.0
        with shuffled-vector-indices =
          (shuffle (loop for a from 0 below (length vec) collect a))
        for i in shuffled-vector-indices
@@ -402,9 +386,9 @@
        for vector-error = (learn-vector (first presentation)
                                         (second presentation)
                                         net)
-       when (< max-error vector-error)
-       do (setf max-error vector-error)
-       finally (return max-error))))
+       collect vector-error into vector-error-collection
+       finally (return (/ (apply '+ vector-error-collection)
+                          (float (length vector-error-collection)))))))
 
 (defgeneric randomize-weights (object &key)
   (:method ((neuron t-neuron) &key max min)
@@ -422,7 +406,7 @@
     (loop for neuron across (neuron-array layer)
        do (randomize-weights neuron :max max :min min))
     layer)
-  (:method ((net t-net) &key (max 0.25) (min (- max)))
+  (:method ((net t-net) &key (max 1.0) (min (- max)))
     (declare (real max min))
     (loop for layer in (layers net) do
          (randomize-weights layer :max max :min min))
@@ -456,7 +440,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~a ~a ~a ~a"
+                     (format nil "~a ~a ~5$ ~4$ ~4$"
                              elapsed iteration
                              mse (min-mse net) (max-mse net)))))
 
@@ -468,7 +452,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~a ~a ~a ~a ~a"
+                     (format nil "~a ~a ~a ~5$ ~4$ ~4$"
                              status elapsed iteration
                              mse (min-mse net) (max-mse net)))))
 
@@ -507,13 +491,15 @@
     (setf (mse-list net) nil)))
 
 (defun shock-weights (net
+                      target-mse
                       mse
                       rerandomize-weights
                       randomize-weights
                       logger-function
                       annealing
                       i)
-  (when (or (and (> mse 0.999) rerandomize-weights)
+  (when (or (and (> mse (* target-mse 10))
+                 rerandomize-weights)
             (shock net))
     (if (listp randomize-weights)
         (apply #'randomize-weights (cons net randomize-weights))
@@ -537,12 +523,12 @@
             (t-set list)
             &key
               (target-mse 0.08)
-              (max-iterations 10000)
+              (max-iterations 1000000)
               (report-frequency 1000)
               (report-function #'default-report-function)
               (status-function #'default-status-function)
               (logger-function #'default-logger-function)
-              (randomize-weights nil)
+              (randomize-weights '(:max 1.0 :min -1.0))
               (annealing nil)
               (rerandomize-weights nil)
               (log-file nil))
@@ -564,12 +550,14 @@
           for mse = 1.0 then (present-vectors net t-set)
           while (and (> mse target-mse) (not (stop-training net)))
           when (or
-                (and (> i 1) (> mse 0.80) (or rerandomize-weights annealing))
+                (and (> i 1)
+                     (> mse (* 10 target-mse))
+                     (or rerandomize-weights annealing))
                 (randomize net)
                 (anneal net)
                 (shock net))
-          do (shock-weights net mse rerandomize-weights randomize-weights
-                            logger-function annealing i)
+          do (shock-weights net target-mse mse rerandomize-weights
+                            randomize-weights logger-function annealing i)
           when (and report-function
                     (or (not last-report-time)
                         (>= (- (get-internal-real-time) last-report-time) rf)))
@@ -599,7 +587,7 @@
                                   :error mse
                                   :status status)))))
      :name (format nil "training-~a" (id net))))
-  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true, then the function starts training from scratch. This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
+  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
 
     '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))"))
 
@@ -690,140 +678,3 @@
              (incf correct)))
        finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
 
-(defun train-n-test (&key
-                       (training-file
-                        (home-based "common-lisp/dc-ann/circle-training-data.csv"))
-                       (test-file
-                        (home-based "common-lisp/dc-ann/circle-test-data.csv"))
-                       (topology '(2 50 1))
-                       (learning-rate 0.1)
-                       (momentum 0.3)
-                       (transfer-function #'bound-sigmoid)
-                       (transfer-derivative #'bound-sigmoid-derivative)
-                       (trained-ann-file
-                        (home-based "common-lisp/dc-ann/circle-ann-frozen.dat"))
-                       (target-mse 0.05)
-                       (max-iterations 1000000)
-                       (randomize-weights '(:min -0.5 :max 0.5))
-                       (annealing nil))
-  (let* ((ann (make-instance 't-net
-                             :topology topology
-                             :learning-rate learning-rate
-                             :momentum momentum
-                             :transfer-function transfer-function
-                             :transfer-derivative transfer-derivative))
-         (t-set (read-data ann training-file))
-         (mark (unique-name))
-         (mark-time mark))
-    (let ((training-results (train ann t-set
-                                   :target-mse 0.05
-                                   :randomize-weights t
-                                   :max-iterations 100000
-                                   :annealing annealing)))
-      (spew (ann-freeze ann) trained-ann-file)
-      (list :trained-ann-file trained-ann-file
-            :ann-description (list :topology topology
-                                   :learning-rate learning-rate
-                                   :momentum momentum
-                                   :transfer-function transfer-function)
-            :training-parameters (list :training-file training-file
-                                       :test-file test-file
-                                       :target-mse target-mse
-                                       :max-iterations max-iterations
-                                       :randomize-weights randomize-weights
-                                       :annealing annealing)
-            :training-results training-results
-            :training-time (elapsed-time mark)
-            :trained-ann-accuracy (evaluate-training
-                                   ann (read-data ann test-file))))))
-
-(defparameter *model-results* nil)
-(defparameter *model-results-mutex* nil)
-
-(defun next-parameter-item (parameter index)
-  (when parameter
-    (if (atom parameter)
-        parameter
-        (elt parameter index))))
-
-(defun try-models (&key
-                     (path (home-based "common-lisp/dc-ann"))
-                     (training-file "circle-training-data.csv")
-                     (test-file "circle-test-data.csv")
-                     (trained-ann-file "circle-ann-frozen.dat")
-                     (results-file "circle-results.dat")
-                     ids
-                     topologies
-                     learning-rates
-                     momenti
-                     transfer-functions
-                     transfer-derivatives
-                     target-mses
-                     max-iterations-s
-                     randomize-weights-s
-                     annealings
-                     (thread-count 2))
-  (when *model-results-mutex*
-    (return-from try-models  "try-models is already running"))
-  (setf *model-results* nil)
-  (setf *model-results-mutex*
-        (make-mutex :name (format nil "model-results-~a" (unique-name))))
-  (loop with training-file = (join-paths path training-file)
-     with test-file = (join-paths path test-file)
-     with extension = (file-extension trained-ann-file)
-     with tafno = (replace-extension trained-ann-file "")
-     with results-file = (join-paths path results-file)
-     for id in ids
-     for index = 0 then (1+ index)
-     for topology = (next-parameter-item topologies index)
-     for learning-rate = (next-parameter-item learning-rates index)
-     for momentum = (next-parameter-item momenti index)
-     for transfer-function = (next-parameter-item transfer-functions index)
-     for transfer-derivative = (next-parameter-item transfer-derivatives index)
-     for target-mse = (next-parameter-item target-mses index)
-     for max-iterations = (next-parameter-item max-iterations-s index)
-     for randomize-weights = (when randomize-weights-s
-                               (if (or (atom randomize-weights-s)
-                                       (member (car randomize-weights-s)
-                                               '(:min :max)))
-                                   randomize-weights-s
-                                   (elt randomize-weights-s index)))
-     for annealing = (next-parameter-item annealings index)
-     for taf = (join-paths path (format nil "~a-~a.~a" tafno id extension))
-     collect
-       (loop with parameters = (list :training-file training-file
-                                     :test-file test-file
-                                     :topology topology
-                                     :learning-rate learning-rate
-                                     :momentum momentum
-                                     :transfer-function transfer-function
-                                     :transfer-derivative transfer-derivative
-                                     :trained-ann-file taf
-                                     :target-mse target-mse
-                                     :max-iterations max-iterations
-                                     :randomize-weights randomize-weights
-                                     :annealing annealing)
-          for (key value) on parameters by #'cddr
-          unless (null value)
-          appending (list key value))
-     into job-queue
-     finally
-       (return (thread-pool-start
-                :try-models
-                (min thread-count (length ids))
-                :job-queue
-                (lambda (standard-output job)
-                  (let* ((*standard-output* standard-output)
-                         (result (apply #'train-n-test job)))
-                    (with-mutex (*model-results-mutex*)
-                      (push result *model-results*)
-                      (freeze-n-spew *model-results* results-file)
-                    nil))
-                (lambda (standard-output)
-                  (let* ((*standard-output* standard-output))
-                    (setf *model-results-mutex* nil)
-                    (format t "All done!~%"))))))))
-
-(defun stop-try-models ()
-  (thread-pool-stop :try-models)
-  (setf *model-results-mutex* nil))
