@@ -97,12 +97,12 @@
 
 (defun transfer-functions (name function-or-derivative)
   (ds-get (ds `(:map :bound-logistic
-                     (:map :function ,#'bound-sigmoid
-                           :derivative ,#'bound-sigmoid-derivative)
+                     (:map :function ,#'bound-logistic
+                           :derivative ,#'bound-logistic-derivative)
 
                      :logistic
-                     (:map :function ,#'sigmoid
-                           :derivative ,#'sigmoid-derivative)
+                     (:map :function ,#'logistic
+                           :derivative ,#'logistic-derivative)
 
                      :relu
                      (:map :function ,#'relu
