@@ -678,3 +678,24 @@
              (incf correct)))
        finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
 
+(defun training-circle-points (count &key stats)
+  (if stats
+      (loop for a from 1 to count
+         for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
+         for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
+         for c = (sqrt (+ (* x x) (* y y)))
+         maximizing x into maxx
+         maximizing y into maxy
+         minimizing x into minx
+         minimizing y into miny
+         summing c into sumc
+         finally (return (list :max-x maxx :max-y maxy
+                               :min-x minx :min-y miny
+                               :average-diameter (/ sumc count))))
+      (loop with diameter = 0.429
+         for a from 1 to count
+         for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
+         for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
+         for c = (sqrt (+ (* x x) (* y y)))
+         appending (list (list x y) (list (if (> c diameter) 0 1))))))
+     
