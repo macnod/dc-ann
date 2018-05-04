@@ -1,4 +1,4 @@
-;; Copyright © 2002 Donnie Cameron
+;; Copyright © 2002-2018 Donnie Cameron
 ;;
 ;; ANN stands for Artificial Neural Network. This is a simple
 ;; implementation of the standard backpropagation neural network.
@@ -133,7 +133,8 @@
    (randomize :accessor randomize :type boolean :initform nil)
    (anneal :accessor anneal :type boolean :initform nil)
    (stop-training :accessor stop-training :type boolean :initform nil)
-   (shock :accessor shock :type boolean :initform nil))
+   (shock :accessor shock :type boolean :initform nil)
+   (last-report-time :accessor last-report-time :type integer :initform nil))
   (:documentation "Describes a standard multilayer, fully-connected backpropagation neural network."))
 
 (defmethod output-layer ((net t-net))
@@ -375,17 +376,41 @@
             (list (map 'vector 'identity (elt tset i))
                   (map 'vector 'identity (elt tset (1+ i)))))))
 
-(defgeneric present-vectors (t-net t-set)
-  (:method ((net t-net) (t-set list))
+(defgeneric present-vectors
+    (t-net t-set iteration start-time report-function time-span-between-reports)
+  (:method ((net t-net) (t-set list)
+            (iteration integer)
+            (start-time integer)
+            (report-function function)
+            (time-span-between-reports integer))
     (loop
-       with vec = (tset-list-to-tset-vectors t-set)
-       with shuffled-vector-indices =
-         (shuffle (loop for a from 0 below (length vec) collect a))
-       for i in shuffled-vector-indices
-       for presentation = (elt vec i)
+       initially (with-open-file (stream "/tmp/training.log" :direction :output :if-exists :append)
+                   (format stream "time-span-between-reports: ~a~%" time-span-between-reports))
+       ;; with vec = (tset-list-to-tset-vectors t-set)
+       ;; with shuffled-vector-indices =
+       ;;   (shuffle (loop for a from 0 below (length vec) collect a))
+       ;; for i in shuffled-vector-indices
+       ;; for i from 0 below (length vec)
+       ;; for j = 1 then (1+ j)
+       for presentation in t-set
        for vector-error = (learn-vector (first presentation)
                                         (second presentation)
                                         net)
+       when (and report-function
+                 (or (null (last-report-time net))
+                     (>= (- (get-internal-real-time) (last-report-time net))
+                         time-span-between-reports)))
+       do
+         (let ((mse (if vector-error-collection
+                        (/ (apply '+ vector-error-collection)
+                           (float (length vector-error-collection)))
+                        1.0)))
+           (funcall report-function
+                    :net net
+                    :elapsed (elapsed start-time)
+                    :iteration iteration
+                    :mse mse)
+           (setf (last-report-time net) (get-internal-real-time)))
        collect vector-error into vector-error-collection
        finally (return (/ (apply '+ vector-error-collection)
                           (float (length vector-error-collection)))))))
@@ -543,11 +568,16 @@
                                          status-function
                                          randomize-weights)
           with start-time = (get-universal-time)
-          with last-report-time
-          with rf = (* (/ report-frequency 1000)
-                       internal-time-units-per-second)
+          with time-span-between-reports =
+            (truncate (* (/ report-frequency 1000.0)
+                         internal-time-units-per-second))
           for i from 1 to max-iterations
-          for mse = 1.0 then (present-vectors net t-set)
+          for mse = 1.0 then (present-vectors 
+                              net t-set
+                              i
+                              start-time
+                              report-function
+                              time-span-between-reports)
           while (and (> mse target-mse) (not (stop-training net)))
           when (or
                 (and (> i 1)
@@ -558,15 +588,6 @@
                 (shock net))
           do (shock-weights net target-mse mse rerandomize-weights
                             randomize-weights logger-function annealing i)
-          when (and report-function
-                    (or (not last-report-time)
-                        (>= (- (get-internal-real-time) last-report-time) rf)))
-          do (funcall report-function
-                      :net net
-                      :elapsed (elapsed start-time)
-                      :iteration i
-                      :mse mse)
-            (setf last-report-time (get-internal-real-time))
           finally (let ((elapsed (elapsed start-time))
                         (status (if (> mse target-mse) "maxi" "target")))
                     (when report-function
@@ -678,7 +699,7 @@
              (incf correct)))
        finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
 
-(defun training-circle-points (count &key stats)
+(defun circle-training-points (count &key stats)
   (if stats
       (loop for a from 1 to count
          for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
@@ -697,5 +718,5 @@
          for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
          for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
          for c = (sqrt (+ (* x x) (* y y)))
-         appending (list (list x y) (list (if (> c diameter) 0 1))))))
+         collect (list (list x y) (list (if (> c diameter) 0 1))))))
      
