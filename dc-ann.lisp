@@ -13,8 +13,6 @@
    (delta :accessor delta :initform 0.0 :type real))
   (:documentation "Describes a neural connection to TARGET neuron.  WEIGHT represents the strength of the connection and DELTA contains the last change in WEIGHT.  TARGET is required."))
 
-
-
 (defclass t-neuron ()
   ((net :reader net :initarg :net :initform (error ":net required") :type t-net)
    (layer :reader layer :initarg :layer :initform (error ":layer required")
@@ -89,11 +87,11 @@
 (defun logistic-derivative (output)
   (* output (- 1 output)))
 
-(defun relu (input)
-  (max 0 input))
+(defun relu (x)
+  (max 0.01 x))
 
-(defun relu-derivative (output)
-  (if (> output 0.0) 1.0 0.01))
+(defun relu-derivative (x)
+  (if (> x 0.0) 1.0 0.01))
 
 (defun transfer-functions (name function-or-derivative)
   (ds-get (ds `(:map :bound-logistic
@@ -184,7 +182,11 @@
                     ((= layer-index (1- (length (topology net)))) :output)
                     (t :hidden))
               :neuron-count (elt (topology net) layer-index)
-              :transfer-tag (transfer-tag net)
+              :transfer-tag
+              (if (or (zerop layer-index)
+                      (= layer-index (1- (length (topology net)))))
+                  :logistic
+                  (transfer-tag net))
               :net net)))
   (loop for layer in (layers net)
      for next-layer = (if (eql (layer-type layer) :output)
@@ -384,8 +386,6 @@
             (report-function function)
             (time-span-between-reports integer))
     (loop
-       initially (with-open-file (stream "/tmp/training.log" :direction :output :if-exists :append)
-                   (format stream "time-span-between-reports: ~a~%" time-span-between-reports))
        ;; with vec = (tset-list-to-tset-vectors t-set)
        ;; with shuffled-vector-indices =
        ;;   (shuffle (loop for a from 0 below (length vec) collect a))
@@ -687,12 +687,11 @@
 (defun evaluate-training (net test-set)
   (let ((total 0.0)
         (correct 0.0))
-    (loop for inputs = (pop test-set)
-       for outputs = (pop test-set)
+    (loop for (inputs outputs) in test-set
        while inputs do
          (incf total)
          (let ((targets (feed net inputs)))
-           (when (loop for output = (pop outputs)
+           (when (loop for output across outputs
                     for target across targets
                     always (or (and (>= target 0.5) (>= output 0.5))
                                (and (< target 0.5) (< output 0.5))))
@@ -718,5 +717,5 @@
          for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
          for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
          for c = (sqrt (+ (* x x) (* y y)))
-         collect (list (list x y) (list (if (> c diameter) 0 1))))))
+         collect (list (vector x y) (vector (if (> c diameter) 0 1))))))
      
