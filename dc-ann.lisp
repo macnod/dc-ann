@@ -88,10 +88,10 @@
   (* output (- 1 output)))
 
 (defun relu (x)
-  (max 0.01 x))
+  (max 0.0001 x))
 
 (defun relu-derivative (x)
-  (if (> x 0.0) 1.0 0.01))
+  (if (> x 0.0) 1.0 0.0001))
 
 (defun transfer-functions (name function-or-derivative)
   (ds-get (ds `(:map :bound-logistic
@@ -182,11 +182,10 @@
                     ((= layer-index (1- (length (topology net)))) :output)
                     (t :hidden))
               :neuron-count (elt (topology net) layer-index)
-              :transfer-tag
-              (if (or (zerop layer-index)
-                      (= layer-index (1- (length (topology net)))))
-                  :logistic
-                  (transfer-tag net))
+              :transfer-tag (transfer-tag net)
+              ;; (if (= layer-index (1- (length (topology net))))
+              ;;     :logistic
+              ;;     (transfer-tag net))
               :net net)))
   (loop for layer in (layers net)
      for next-layer = (if (eql (layer-type layer) :output)
