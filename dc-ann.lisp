@@ -88,10 +88,20 @@
   (* output (- 1 output)))
 
 (defun relu (x)
-  (max 0.0001 x))
+  (max 0.0 x))
 
 (defun relu-derivative (x)
-  (if (> x 0.0) 1.0 0.0001))
+  (if (>= x 0.0) 1.0 0.0))
+
+(defun tanh-derivative (x) (- 1 (* x x)))
+
+(defun identity-derivative (x)
+  (declare (ignore x))
+  1)
+
+(defun no-activation (x) x)
+
+(defun no-activation-derivative (x) x)
 
 (defun transfer-functions (name function-or-derivative)
   (ds-get (ds `(:map :bound-logistic
@@ -102,13 +112,29 @@
                      (:map :function ,#'logistic
                            :derivative ,#'logistic-derivative)
 
+                     :sigmoid
+                     (:map :function ,#'logistic
+                           :derivative ,#'logistic-derivative)
+
+                     :tanh
+                     (:map :function ,#'tanh
+                           :derivative ,#'tanh-derivative)
+
+                     :identity
+                     (:map :function ,#'identity
+                           :derivative ,#'identity-derivative)
+
                      :relu
                      (:map :function ,#'relu
                            :derivative ,#'relu-derivative)
 
                      :rectified-linear
                      (:map :function ,#'relu
-                           :derivative ,#'relu-derivative)))
+                           :derivative ,#'relu-derivative)
+
+                     :none
+                     (:map :function ,#'no-activation
+                           :derivative ,#'no-activation-derivative)))
           name function-or-derivative))
 
 (defclass t-net ()
@@ -147,6 +173,18 @@
 (defmethod get-neuron ((net t-net) (layer-index integer) (neuron-index integer))
   (elt (neuron-array (elt (layers net) layer-index)) neuron-index))
 
+(defun set-layer-transfer-function (net layer-index transfer-tag)
+  (loop for neuron across (neuron-array (elt (layers net) layer-index))
+     do (setf (transfer-tag neuron) transfer-tag)
+       (setf (transfer-function neuron)
+             (transfer-functions transfer-tag :function))
+       (setf (transfer-derivative neuron)
+             (transfer-functions transfer-tag :derivative))))
+
+(defun set-network-transfer-function (net transfer-tag)
+  (loop for layer in (layers net) do
+       (set-layer-transfer-function net (layer-index layer) transfer-tag)))
+
 (defmethod transfer ((neuron t-neuron))
   (setf (output neuron)
         (funcall (transfer-function neuron) (input neuron)))
@@ -171,7 +209,8 @@
 
 (defmethod initialize-instance :after ((net t-net) &key)
   (setf (layers net)
-        (loop for layer-spec in (topology net)
+        (loop with output-layer-index = (1- (length (topology net)))
+           for layer-spec in (topology net)
            for layer-index = 0 then (1+ layer-index)
            collect
              (make-instance
@@ -179,13 +218,13 @@
               :layer-index layer-index
               :layer-type
               (cond ((zerop layer-index) :input)
-                    ((= layer-index (1- (length (topology net)))) :output)
+                    ((= layer-index output-layer-index) :output)
                     (t :hidden))
               :neuron-count (elt (topology net) layer-index)
-              :transfer-tag (transfer-tag net)
-              ;; (if (= layer-index (1- (length (topology net))))
-              ;;     :logistic
-              ;;     (transfer-tag net))
+              :transfer-tag 
+              (if (= layer-index (1- (length (topology net))))
+                  :none
+                  (transfer-tag net))
               :net net)))
   (loop for layer in (layers net)
      for next-layer = (if (eql (layer-type layer) :output)
