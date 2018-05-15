@@ -20,6 +20,7 @@
    (layer-type :accessor layer-type :initarg :layer-type :initform nil)
    (biased :reader biased :initarg :biased :initform nil :type boolean)
    (id :accessor id :type integer)
+   (index-in-layer :accessor index-in-layer :initarg :index-in-layer :type integer)
    (input :accessor input :initform 0.0 :type real)
    (transfer-tag :accessor transfer-tag :initarg :transfer-tag :initform :sigmoid)
    (transfer-function :accessor transfer-function :initform nil)
@@ -35,6 +36,8 @@
 
 (defmethod initialize-instance :after ((neuron t-neuron) &key)
   (setf (id neuron) (incf (next-id (net neuron))))
+  (when (biased neuron)
+    (setf (input neuron) 1.0))
   (setf (transfer-function neuron)
         (transfer-functions (transfer-tag neuron) :function))
   (setf (transfer-derivative neuron)
@@ -61,12 +64,13 @@
                  (if (equal (layer-type layer) :output) 0 1))))
     (setf (neuron-count layer) size)
     (setf (neuron-array layer)
-          (make-array size :element-type 't-neuron :fill-pointer 0))
+          (make-array size :fill-pointer 0))
     (loop for a from 0 below size do
          (vector-push
           (make-instance 't-neuron
                          :layer (layer-index layer)
                          :layer-type (layer-type layer)
+                         :index-in-layer a
                          :biased (and (not (equal (layer-type layer) :output))
                                       (= a (1- size)))
                          :net (net layer)
@@ -186,6 +190,7 @@
        (set-layer-transfer-function net (layer-index layer) transfer-tag)))
 
 (defmethod transfer ((neuron t-neuron))
+  (let ((transfer-function (transfer-function neuron)))
   (setf (output neuron)
         (funcall (transfer-function neuron) (input neuron)))
   neuron)
@@ -221,10 +226,7 @@
                     ((= layer-index output-layer-index) :output)
                     (t :hidden))
               :neuron-count (elt (topology net) layer-index)
-              :transfer-tag 
-              (if (= layer-index (1- (length (topology net))))
-                  :none
-                  (transfer-tag net))
+              :transfer-tag (transfer-tag net)
               :net net)))
   (loop for layer in (layers net)
      for next-layer = (if (eql (layer-type layer) :output)
@@ -757,3 +759,8 @@
          for c = (sqrt (+ (* x x) (* y y)))
          collect (list (vector x y) (vector (if (> c diameter) 0 1))))))
      
+(defun xor-training ()
+  (list (list #(0.0 0.0) #(1.0))
+        (list #(0.0 1.0) #(0.0))
+        (list #(1.0 0.0) #(0.0))
+        (list #(1.0 1.0) #(1.0))))
