@@ -193,7 +193,7 @@
   (let ((transfer-function (transfer-function neuron)))
   (setf (output neuron)
         (funcall (transfer-function neuron) (input neuron)))
-  neuron)
+  neuron))
 
 (defmethod connect ((net t-net))
   (loop for layer in (butlast (layers net)) do
