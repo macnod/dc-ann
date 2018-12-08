@@ -497,6 +497,11 @@
 (defun elapsed (start-time)
   (- (get-universal-time) start-time))
 
+(defun write-log-entry (stream message)
+  (let* ((log-entry (log-entry message))
+         (length-of-message (1- (length log-entry))))
+    (write-line log-entry stream :start 0 :end length-of-message)))
+
 (defun default-report-function (&key net elapsed iteration mse)
   (when (> mse (max-mse net)) (setf (max-mse net) mse))
   (when (< mse (min-mse net)) (setf (min-mse net) mse))
@@ -713,15 +718,36 @@
          (setf (y-coor neuron) y))
     layer))
 
-(defun read-data (net csv-file)
+(defun read-data (net csv-file &key outputs-first limit output-labels)
   (let (tset)
     (with-lines-in-file (row csv-file)
       (when (not (zerop (length (trim row))))
-        (let* ((numbers (mapcar #'parse-number (split-n-trim row :on-regex ",")))
-               (inputs (subseq numbers 0 (car (topology net))))
-               (outputs (subseq numbers (car (topology net)))))
-          (push outputs tset)
-          (push inputs tset))))
+        (let ((numbers (mapcar #'parse-number (split-n-trim row :on-regex ",")))
+              inputs
+              outputs)
+          (if outputs-first
+              (setf outputs (if output-labels
+                                (car numbers)
+                                (subseq numbers 0 (length (outputs net))))
+                    inputs (if output-labels
+                               (cdr numbers)
+                               (subseq numbers (length (outputs net)))))
+              (setf inputs (if output-labels 
+                               (butlast numbers)
+                               (subseq numbers 0 (car (topology net))))
+                    outputs (if output-labels
+                                (car (last numbers))
+                                (subseq numbers (car (topology net))))))
+          (when output-labels
+            (setf outputs (loop with position = (position outputs output-labels)
+                             for a from 0 below (length (outputs net))
+                             collect (if (= a position) 1.0 0.0))))
+          (let ((input-vector (apply #'vector inputs))
+                (output-vector (apply #'vector outputs)))
+            (push (list input-vector output-vector) tset))))
+        (when limit
+          (decf limit)
+          (when (zerop limit) (return tset))))
     tset))
 
 (defun evaluate-training (net test-set)
@@ -764,3 +790,12 @@
         (list #(0.0 1.0) #(0.0))
         (list #(1.0 0.0) #(0.0))
         (list #(1.0 1.0) #(1.0))))
+
+(defun evaluate-label-training (net presentation)
+  (let* ((max (apply #'max (map 'list 'identity (second presentation))))
+         (target (position max (second presentation)))
+         (output (feed net (first presentation)))
+         (rmax (apply #'max (map 'list 'identity output)))
+         (result (position rmax output)))
+    (list :target target :result result)))
+
