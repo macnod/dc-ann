@@ -191,9 +191,9 @@
 
 (defmethod transfer ((neuron t-neuron))
   (let ((transfer-function (transfer-function neuron)))
-  (setf (output neuron)
-        (funcall (transfer-function neuron) (input neuron)))
-  neuron))
+    (setf (output neuron)
+          (funcall (transfer-function neuron) (input neuron)))
+    neuron))
 
 (defmethod connect ((net t-net))
   (loop for layer in (butlast (layers net)) do
@@ -764,7 +764,7 @@
              (incf correct)))
        finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
 
-(defun circle-training-points (count &key stats)
+(defun circle-training (count &key stats)
   (if stats
       (loop for a from 1 to count
          for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
@@ -785,6 +785,18 @@
          for c = (sqrt (+ (* x x) (* y y)))
          collect (list (vector x y) (vector (if (> c diameter) 0 1))))))
      
+(defun circle-training-1hs (count)
+  "First output represents 'yes', second output 'no'"
+  (loop with diameter = 0.429
+     for a from 1 to count
+     for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
+     for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
+     for c = (sqrt (+ (* x x) (* y y)))
+     collect (list (vector x y)
+                   (if (> c diameter)
+                       (vector 0.0 1.0)
+                       (vector 1.0 0.0)))))
+
 (defun xor-training ()
   (list (list #(0.0 0.0) #(1.0))
         (list #(0.0 1.0) #(0.0))
@@ -799,3 +811,25 @@
          (result (position rmax output)))
     (list :target target :result result)))
 
+
+(defun xor-training-1hs ()
+  "First output represents 'yes', second output 'no'"
+  (list (list #(0.0 0.0) #(1.0 0.0))
+        (list #(0.0 1.0) #(0.0 1.0))
+        (list #(1.0 0.0) #(0.0 1.0))
+        (list #(1.0 1.0) #(1.0 0.0))))
+
+(defun generate-counting-data (n)
+  (loop for a from 1 to n
+     for digit = (random 10)
+     for input-lit = (loop with places = nil 
+                  for b from 1 to digit
+                  for place = (loop for x = (random 10)
+                                 while (member x places)
+                                 finally (return x))
+                  do (push place places)
+                  collect place)
+     for output = (loop for a from 0 below 10 collect (if (= a digit) 1 0))
+     for input = (loop for c from 0 to 9 collect (if (member c input-lit) 1 0))
+     collect (list (map 'vector 'identity input)
+                   (map 'vector 'identity output))))
