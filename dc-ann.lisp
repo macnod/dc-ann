@@ -31,6 +31,7 @@
    (derivative :accessor derivative :initform 0.0 :type real)
    (x-coor :accessor x-coor :initform 0.0 :type real)
    (y-coor :accessor y-coor :initform 0.0 :type real)
+   (label :accessor label :initform "" :initarg :label)
    (cxs :accessor cxs :initform nil :type list))
   (:documentation "Describes a neuron.  NET, required, is an object of type t-net that represents the neural network that this neuron is a part of.  LAYER, required, is an object of type t-layer that represents the neural network layer that this neuron belongs to.  If BIASED is true, the neuron will not have incoming connections.  ID is a distinct integer that identifies the neuron. X-COOR and Y-COOR allow this neuron to be placed in 2-dimentional space.  CXS contains the list of outgoing connections (of type t-cx) to other neurons."))
 
@@ -74,7 +75,9 @@
                          :biased (and (not (equal (layer-type layer) :output))
                                       (= a (1- size)))
                          :net (net layer)
-                         :transfer-tag (transfer-tag layer))
+                         :transfer-tag (transfer-tag layer)
+                         :label (when (equal (layer-type layer) :output)
+                                  (elt (output-labels (net layer)) a)))
           (neuron-array layer)))))
 
 (defun bound-logistic (input)
@@ -144,6 +147,7 @@
 (defclass t-net ()
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
+   (output-labels :accessor output-labels :initarg :output-labels :initform nil)
    (learning-rate :accessor learning-rate :initarg :learning-rate :initform 0.3)
    (momentum :accessor momentum :initarg :momentum :initform 0.8)
    (wi :accessor wi :initform 0)
@@ -339,6 +343,17 @@
     (fire net)
     ;; Return a vector with the output value of each output-layer neuron
     (map 'vector 'output (neuron-array (output-layer net)))))
+
+(defgeneric winner (t-net inputs)
+  (:method ((net t-net) (inputs list))
+    (winner net (map 'vector 'identity inputs)))
+  (:method ((net t-net) (inputs vector))
+    (feed net inputs)
+    (loop for neuron across (neuron-array (output-layer net))
+       for top-neuron = neuron then (if (> (input neuron) (input top-neuron))
+                                        neuron
+                                        top-neuron)
+       finally (return (label top-neuron)))))
 
 ;; Current
 (defun backprop-output (neuron)
@@ -722,9 +737,16 @@
   (let (tset)
     (with-lines-in-file (row csv-file)
       (when (not (zerop (length (trim row))))
-        (let ((numbers (mapcar #'parse-number (split-n-trim row :on-regex ",")))
-              inputs
-              outputs)
+        (let* ((values (split-n-trim row :on-regex ","))
+               (numbers (cond ((and outputs-first output-labels)
+                               (cons (car values)
+                                     (mapcar #'parse-number (cdr values))))
+                              (output-labels
+                               (append (mapcar #'parse-number (butlast values))
+                                       (last values)))
+                              (t (mapcar #'parse-number values))))
+               inputs
+               outputs)
           (if outputs-first
               (setf outputs (if output-labels
                                 (car numbers)
@@ -739,7 +761,8 @@
                                 (car (last numbers))
                                 (subseq numbers (car (topology net))))))
           (when output-labels
-            (setf outputs (loop with position = (position outputs output-labels)
+            (setf outputs (loop with position = (position outputs output-labels
+                                                          :test 'equal)
                              for a from 0 below (length (outputs net))
                              collect (if (= a position) 1.0 0.0))))
           (let ((input-vector (apply #'vector inputs))
