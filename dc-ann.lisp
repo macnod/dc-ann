@@ -840,7 +840,6 @@
          (result (position rmax output)))
     (list :target target :result result)))
 
-
 (defun xor-training-1hs ()
   "First output represents 'yes', second output 'no'"
   (list (list #(0.0 0.0) #(1.0 0.0))
@@ -862,3 +861,19 @@
      for input = (loop for c from 0 to 9 collect (if (member c input-lit) 1 0))
      collect (list (map 'vector 'identity input)
                    (map 'vector 'identity output))))
+
+(defun make-segment-file-names (file segment-line-count
+                                &optional (target-directory "/tmp"))
+  (loop with name = (file-namestring file)
+     for a from 1 to segment-line-count
+     collect (join-paths
+              target-directory
+              (format nil "~a-~',3d"))))
+         
+
+(defun make-training-segments (file &optional (max-segment-size 100000))
+  (let* ((line-count (file-line-count file))
+         (average-line-size (truncate (float (lof file)) line-count))
+         (segment-line-count (truncate max-segment-size average-line-size))
+         (segment-file-names (make-segment-file-names file segment-line-count))
+    
