@@ -609,7 +609,7 @@
 
 (defgeneric train (t-net t-set &key)
   (:method ((net t-net)
-            (t-set list)
+            (t-set string)
             &key
               (target-mse 0.08)
               (max-iterations 1000000)
@@ -862,18 +862,33 @@
      collect (list (map 'vector 'identity input)
                    (map 'vector 'identity output))))
 
-(defun make-segment-file-names (file segment-line-count
+(defun make-segment-file-names (file 
+                                file-line-count
+                                segment-line-count
                                 &optional (target-directory "/tmp"))
-  (loop with name = (file-namestring file)
-     for a from 1 to segment-line-count
+  (loop with name = (pathname-name file)
+     with extension = (pathname-type file)
+     with segment-count = (ceiling (/ (float file-line-count)
+                                      segment-line-count))
+     for a from 1 to segment-count
      collect (join-paths
               target-directory
-              (format nil "~a-~',3d"))))
-         
+              (format nil "~a-~4,'0d.~a" name a extension))))
 
 (defun make-training-segments (file &optional (max-segment-size 100000))
   (let* ((line-count (file-line-count file))
          (average-line-size (truncate (float (lof file)) line-count))
          (segment-line-count (truncate max-segment-size average-line-size))
-         (segment-file-names (make-segment-file-names file segment-line-count))
-    
+         (segment-file-names (make-segment-file-names file
+                                                      line-count
+                                                      segment-line-count)))
+    (with-open-file (in file)
+      (loop for file in segment-file-names
+         do (with-open-file (out file :direction :output :if-exists :supersede)
+              (loop with line-count = 1
+                 for line = (read-line in nil)
+                 when line do
+                   (write-line line out)
+                   (incf line-count)
+                 while (and line (<= line-count segment-line-count))))))))
+            
