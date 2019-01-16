@@ -37,6 +37,8 @@
 
 (defmethod initialize-instance :after ((neuron t-neuron) &key)
   (setf (id neuron) (incf (next-id (net neuron))))
+  (unless (label neuron)
+    (setf (label neuron) (format nil "~a" (id neuron))))
   (when (biased neuron)
     (setf (input neuron) 1.0))
   (setf (transfer-function neuron)
@@ -76,7 +78,9 @@
                                       (= a (1- size)))
                          :net (net layer)
                          :transfer-tag (transfer-tag layer)
-                         :label (when (equal (layer-type layer) :output)
+                         :label (when (and
+                                       (equal (layer-type layer) :output)
+                                       (output-labels (net layer)))
                                   (elt (output-labels (net layer)) a)))
           (neuron-array layer)))))
 
@@ -668,9 +672,11 @@
                                   :error mse
                                   :status status)))))
      :name (format nil "training-~a" (id net))))
-  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of alternating input and output lists, where each input/output list pair represents a single training vector.  Here's an example for the exclusive-or problem:
-
-    '((0 0) (1) (0 1) (0) (1 0) (0) (1 1) (1))"))
+  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of training vectors. Each training vector consists of a list that contains an input vector and an output vector.  Here's an example for the exclusive-or problem:
+    (list (#(0 0) #(1))
+          (#(0 1) #(0))
+          (#(1 0) #(0))
+          (#(1 1) #(1)))"))
 
 (defgeneric object-freeze (object stream)
   (:method ((net t-net) (s stream))
