@@ -529,7 +529,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~a ~5$ ~4$ ~4$"
+                     (format nil "~as ~ai ~5$e ~4$min ~4$max"
                              elapsed iteration
                              mse (min-mse net) (max-mse net)))))
 
@@ -541,7 +541,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~a ~a ~5$ ~4$ ~4$"
+                     (format nil "~a ~as ~ai ~5$e ~4$min ~4$max"
                              status elapsed iteration
                              mse (min-mse net) (max-mse net)))))
 
