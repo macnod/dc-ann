@@ -163,6 +163,7 @@
    (mse-list :accessor mse-list :type list :initform nil)
    (id :reader id :initarg :id :type string :initform (unique-name))
    (log-file :accessor log-file :type string :initform nil)
+   (cache :accessor cache :initform (make-hash-table :test 'equal))
    (last-anneal-iteration :accessor last-anneal-iteration
                           :type integer
                           :initform 0)
@@ -739,45 +740,55 @@
          (setf (y-coor neuron) y))
     layer))
 
-(defun read-data (net csv-file &key outputs-first limit output-labels)
-  (let (tset)
-    (with-lines-in-file (row csv-file)
-      (when (not (zerop (length (trim row))))
-        (let* ((values (split-n-trim row :on-regex ","))
-               (numbers (cond ((and outputs-first output-labels)
-                               (cons (car values)
-                                     (mapcar #'parse-number (cdr values))))
-                              (output-labels
-                               (append (mapcar #'parse-number (butlast values))
-                                       (last values)))
-                              (t (mapcar #'parse-number values))))
-               inputs
-               outputs)
-          (if outputs-first
-              (setf outputs (if output-labels
-                                (car numbers)
-                                (subseq numbers 0 (length (outputs net))))
-                    inputs (if output-labels
-                               (cdr numbers)
-                               (subseq numbers (length (outputs net)))))
-              (setf inputs (if output-labels 
-                               (butlast numbers)
-                               (subseq numbers 0 (car (topology net))))
-                    outputs (if output-labels
-                                (car (last numbers))
-                                (subseq numbers (car (topology net))))))
-          (when output-labels
-            (setf outputs (loop with position = (position outputs output-labels
-                                                          :test 'equal)
-                             for a from 0 below (length (outputs net))
-                             collect (if (= a position) 1.0 0.0))))
-          (let ((input-vector (apply #'vector inputs))
-                (output-vector (apply #'vector outputs)))
-            (push (list input-vector output-vector) tset))))
-        (when limit
-          (decf limit)
-          (when (zerop limit) (return tset))))
-    tset))
+(defun read-data (net csv-file 
+                  &key outputs-first limit output-labels (cache t))
+  (let ((cache-file (gethash csv-file (cache net))))
+    (if (and cache cache-file)
+        (slurp-n-thaw cache-file)
+        (let (tset)
+          (with-lines-in-file (row csv-file)
+            (when (not (zerop (length (trim row))))
+              (let* ((values (split-n-trim row :on-regex ","))
+                     (numbers
+                      (cond ((and outputs-first output-labels)
+                             (cons (car values)
+                                   (mapcar #'parse-number (cdr values))))
+                            (output-labels
+                             (append (mapcar #'parse-number (butlast values))
+                                     (last values)))
+                            (t (mapcar #'parse-number values))))
+                     inputs
+                     outputs)
+                (if outputs-first
+                    (setf outputs (if output-labels
+                                      (car numbers)
+                                      (subseq numbers 0 (length (outputs net))))
+                          inputs (if output-labels
+                                     (cdr numbers)
+                                     (subseq numbers (length (outputs net)))))
+                    (setf inputs (if output-labels 
+                                     (butlast numbers)
+                                     (subseq numbers 0 (car (topology net))))
+                          outputs (if output-labels
+                                      (car (last numbers))
+                                      (subseq numbers (car (topology net))))))
+                (when output-labels
+                  (setf outputs (loop with position = 
+                                     (position outputs output-labels
+                                               :test 'equal)
+                                   for a from 0 below (length (outputs net))
+                                   collect (if (= a position) 1.0 0.0))))
+                (let ((input-vector (apply #'vector inputs))
+                      (output-vector (apply #'vector outputs)))
+                  (push (list input-vector output-vector) tset))))
+            (when limit
+              (decf limit)
+              (when (zerop limit) (return tset))))
+          (let ((cache-file (replace-extension csv-file ".cache")))
+            (setf (gethash csv-file (cache net)) cache-file)
+            (freeze-n-spew tset cache-file))
+          tset))))
+          
 
 (defun evaluate-training (net test-set)
   (let ((total 0.0)
