@@ -152,6 +152,10 @@
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
    (output-labels :accessor output-labels :initarg :output-labels :initform nil)
+   (outputs-first :accessor outputs-first :initarg :outputs-first :initform nil)
+   (training-segments :accessor training-segments
+                      :initarg :training-segments 
+                      :initform nil)
    (learning-rate :accessor learning-rate :initarg :learning-rate :initform 0.3)
    (momentum :accessor momentum :initarg :momentum :initform 0.8)
    (wi :accessor wi :initform 0)
@@ -438,21 +442,17 @@
             (list (map 'vector 'identity (elt tset i))
                   (map 'vector 'identity (elt tset (1+ i)))))))
 
-(defgeneric present-vectors
-    (t-net t-set iteration start-time report-function time-span-between-reports)
-  (:method ((net t-net) (t-set list)
+(defgeneric present-vectors (t-net filename iteration start-time
+                             report-function time-span-between-reports)
+  (:method ((net t-net)
+            (filename string)
             (iteration integer)
             (start-time integer)
             (report-function function)
             (time-span-between-reports integer))
     (loop
-       ;; with vec = (tset-list-to-tset-vectors t-set)
-       ;; with shuffled-vector-indices =
-       ;;   (shuffle (loop for a from 0 below (length vec) collect a))
-       ;; for i in shuffled-vector-indices
-       ;; for i from 0 below (length vec)
-       ;; for j = 1 then (1+ j)
-       for presentation in t-set
+       for segment-file-name in (training-segments net)
+       for presentation in (read-data net segment-file-name)
        for vector-error = (learn-vector (first presentation)
                                         (second presentation)
                                         net)
@@ -553,6 +553,7 @@
     (write-log-entry stream message)))
 
 (defun initialize-training (net
+                            training-file
                             log-file
                             status-function
                             randomize-weights)
@@ -578,7 +579,9 @@
     (if (listp randomize-weights)
         (apply #'randomize-weights (cons net randomize-weights))
         (randomize-weights net))
-    (setf (mse-list net) nil)))
+    (setf (mse-list net) nil))
+  (setf (training-segments net)
+        (make-training-segments training-file)))
 
 (defun shock-weights (net
                       target-mse
@@ -608,11 +611,12 @@
   (setf (anneal net) nil)
   (setf (shock net) nil))
 
-(defgeneric train (t-net t-set &key)
+(defgeneric train (t-net training-file &key)
   (:method ((net t-net)
-            (t-set string)
+            (training-file string)
             &key
               (target-mse 0.08)
+              (outputs-first nil)
               (max-iterations 1000000)
               (report-frequency 1000)
               (report-function #'default-report-function)
@@ -629,6 +633,7 @@
      (lambda ()
        (loop
           initially (initialize-training net
+                                         training-file
                                          log-file
                                          status-function
                                          randomize-weights)
@@ -638,7 +643,7 @@
                          internal-time-units-per-second))
           for i from 1 to max-iterations
           for mse = 1.0 then (present-vectors 
-                              net t-set
+                              net training-file
                               i
                               start-time
                               report-function
@@ -673,7 +678,7 @@
                                   :error mse
                                   :status status)))))
      :name (format nil "training-~a" (id net))))
-  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of training vectors. Each training vector consists of a list that contains an input vector and an output vector.  Here's an example for the exclusive-or problem:
+  (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. training-file is a CSV file that contains a list of training vectors. Each training vector has inputs followed by outputs (or outputs followed by inputs, depending on the value of contains an input vector and an output vector.  Here's an example for the exclusive-or problem:
     (list (#(0 0) #(1))
           (#(0 1) #(0))
           (#(1 0) #(0))
@@ -740,10 +745,11 @@
          (setf (y-coor neuron) y))
     layer))
 
-(defun read-data (net csv-file 
-                  &key outputs-first limit output-labels (cache t))
-  (let ((cache-file (gethash csv-file (cache net))))
-    (if (and cache cache-file)
+(defun read-data (net csv-file)
+  (let ((cache-file (gethash csv-file (cache net)))
+        (outputs-first (outputs-first net))
+        (output-labels (output-labels net)))
+    (if cache-file
         (slurp-n-thaw cache-file)
         (let (tset)
           (with-lines-in-file (row csv-file)
@@ -781,12 +787,9 @@
                 (let ((input-vector (apply #'vector inputs))
                       (output-vector (apply #'vector outputs)))
                   (push (list input-vector output-vector) tset))))
-            (when limit
-              (decf limit)
-              (when (zerop limit) (return tset))))
           (let ((cache-file (replace-extension csv-file ".cache")))
             (setf (gethash csv-file (cache net)) cache-file)
-            (freeze-n-spew tset cache-file))
+            (freeze-n-spew tset cache-file)))
           tset))))
           
 
@@ -901,5 +904,6 @@
                  when line do
                    (write-line line out)
                    (incf line-count)
-                 while (and line (<= line-count segment-line-count))))))))
+                 while (and line (<= line-count segment-line-count))))))
+    segment-file-names))
             
