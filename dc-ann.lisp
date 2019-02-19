@@ -640,7 +640,8 @@
               (randomize-weights '(:max 1.0 :min -1.0))
               (annealing nil)
               (rerandomize-weights nil)
-              (log-file nil))
+              (log-file nil)
+              (clear-segments t))
     (declare (real target-mse)
              (integer max-iterations report-frequency)
              (function report-function status-function))
@@ -691,6 +692,7 @@
                                :elapsed elapsed
                                :iteration i
                                :mse mse))
+                    (when clear-segments (clear-segments net))
                     (return (list :elapsed (elapsed start-time)
                                   :iterations i
                                   :error mse
@@ -918,3 +920,7 @@
                    (incf line-count)
                  while (and line (<= line-count segment-line-count))))))
     segment-file-names))
+
+(defun clear-segments (net)
+  (loop for segment in (training-segments net)
+       do (delete-file segment)))
