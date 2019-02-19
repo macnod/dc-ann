@@ -152,10 +152,13 @@
   ((topology :reader topology :initarg :topology
              :initform (error ":topology required"))
    (output-labels :accessor output-labels :initarg :output-labels :initform nil)
+   (training-segments :accessor training-segments :type list
+                      :initarg :training-segments :initform nil)
    (learning-rate :accessor learning-rate :initarg :learning-rate :initform 0.3)
    (momentum :accessor momentum :initarg :momentum :initform 0.8)
    (wi :accessor wi :initform 0)
-   (transfer-tag :accessor transfer-tag :initarg :transfer-tag :initform :logistic)
+   (transfer-tag :accessor transfer-tag
+                 :initarg :transfer-tag :initform :logistic)
    (layers :accessor layers)
    (next-id :accessor next-id :initform 0)
    (min-mse :accessor min-mse :type real :initform 1000000.0)
@@ -361,7 +364,7 @@
 
 ;; Current
 (defun backprop-output (neuron)
-  (loop 
+  (loop
      for cx in (cxs neuron)
      for target-neuron = (target cx)
      do (setf (err target-neuron)
@@ -407,7 +410,7 @@
     (loop for neuron across (neuron-array layer)
        do (update-weights neuron)))
   (:method ((net t-net))
-    (loop for layer in (layers net) 
+    (loop for layer in (layers net)
        do (update-weights layer))))
 
 (defmethod output-layer-error ((net t-net) (outputs vector))
@@ -437,40 +440,48 @@
             (list (map 'vector 'identity (elt tset i))
                   (map 'vector 'identity (elt tset (1+ i)))))))
 
-(defgeneric present-vectors
-    (t-net t-set iteration start-time report-function time-span-between-reports)
-  (:method ((net t-net) (t-set list)
+(defgeneric present-vectors (t-net
+                             outputs-first
+                             output-labels
+                             iteration
+                             start-time
+                             report-function
+                             time-span-between-reports)
+  (:method ((net t-net)
+            outputs-first
+            (output-labels list)
             (iteration integer)
             (start-time integer)
             (report-function function)
             (time-span-between-reports integer))
-    (loop
-       ;; with vec = (tset-list-to-tset-vectors t-set)
-       ;; with shuffled-vector-indices =
-       ;;   (shuffle (loop for a from 0 below (length vec) collect a))
-       ;; for i in shuffled-vector-indices
-       ;; for i from 0 below (length vec)
-       ;; for j = 1 then (1+ j)
-       for presentation in t-set
-       for vector-error = (learn-vector (first presentation)
-                                        (second presentation)
-                                        net)
-       when (and report-function
-                 (or (null (last-report-time net))
-                     (>= (- (get-internal-real-time) (last-report-time net))
-                         time-span-between-reports)))
-       do
-         (let ((mse (if vector-error-collection
-                        (/ (apply '+ vector-error-collection)
-                           (float (length vector-error-collection)))
-                        1.0)))
-           (funcall report-function
-                    :net net
-                    :elapsed (elapsed start-time)
-                    :iteration iteration
-                    :mse mse)
-           (setf (last-report-time net) (get-internal-real-time)))
-       collect vector-error into vector-error-collection
+    (loop for training-segment in (shuffle (training-segments net))
+       for t-set = (read-data net training-segment
+                              :outputs-first outputs-first
+                              :output-labels output-labels)
+       append (loop
+                 for presentation in t-set
+                 for vector-error = (learn-vector (first presentation)
+                                                  (second presentation)
+                                                  net)
+                 when (and report-function
+                           (or (null (last-report-time net))
+                               (>= (- (get-internal-real-time)
+                                      (last-report-time net))
+                                   time-span-between-reports)))
+                 do
+                   (let ((mse (if error-collection
+                                  (/ (apply '+ error-collection)
+                                     (float (length error-collection)))
+                                  1.0)))
+                     (funcall report-function
+                              :net net
+                              :elapsed (elapsed start-time)
+                              :iteration iteration
+                              :mse mse)
+                     (setf (last-report-time net) (get-internal-real-time)))
+                 collect vector-error into error-collection
+                 finally (return error-collection))
+       into vector-error-collection
        finally (return (/ (apply '+ vector-error-collection)
                           (float (length vector-error-collection)))))))
 
@@ -529,9 +540,9 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~as ~ai ~5$e ~4$min ~4$max"
+                     (format nil "~as ~ai ~4$ < ~5$ > ~4$"
                              elapsed iteration
-                             mse (min-mse net) (max-mse net)))))
+                             (min-mse net) mse (max-mse net)))))
 
 (defun default-status-function (&key net status elapsed iteration mse)
   (when (> mse (max-mse net)) (setf (max-mse net) mse))
@@ -541,9 +552,9 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~as ~ai ~5$e ~4$min ~4$max"
+                     (format nil "~a ~as ~ai ~4$ < ~5$ > ~4$"
                              status elapsed iteration
-                             mse (min-mse net) (max-mse net)))))
+                             (min-mse net) mse (max-mse net)))))
 
 (defun default-logger-function (net message)
   (with-open-file (stream (log-file net) :direction :output
@@ -552,6 +563,8 @@
     (write-log-entry stream message)))
 
 (defun initialize-training (net
+                            tset
+                            max-segment-size
                             log-file
                             status-function
                             randomize-weights)
@@ -559,6 +572,9 @@
         (if log-file
             log-file
             (format nil "/tmp/training-~a.log" (id net))))
+  (setf (training-segments net) (make-training-segments
+                                 tset
+                                 max-segment-size))
   (setf (max-mse net) -1000000.0)
   (setf (min-mse net) 1000000.0)
   (setf (last-anneal-iteration net) 0)
@@ -587,6 +603,7 @@
                       logger-function
                       annealing
                       i)
+  (funcall logger-function "shock")
   (when (or (and (> mse (* target-mse 10))
                  rerandomize-weights)
             (shock net))
@@ -611,6 +628,9 @@
   (:method ((net t-net)
             (t-set string)
             &key
+              (max-segment-size 100000)
+              outputs-first
+              output-labels
               (target-mse 0.08)
               (max-iterations 1000000)
               (report-frequency 1000)
@@ -628,6 +648,8 @@
      (lambda ()
        (loop
           initially (initialize-training net
+                                         t-set
+                                         max-segment-size
                                          log-file
                                          status-function
                                          randomize-weights)
@@ -636,8 +658,10 @@
             (truncate (* (/ report-frequency 1000.0)
                          internal-time-units-per-second))
           for i from 1 to max-iterations
-          for mse = 1.0 then (present-vectors 
-                              net t-set
+          for mse = 1.0 then (present-vectors
+                              net
+                              outputs-first
+                              output-labels
                               i
                               start-time
                               report-function
@@ -760,7 +784,7 @@
                     inputs (if output-labels
                                (cdr numbers)
                                (subseq numbers (length (outputs net)))))
-              (setf inputs (if output-labels 
+              (setf inputs (if output-labels
                                (butlast numbers)
                                (subseq numbers 0 (car (topology net))))
                     outputs (if output-labels
@@ -813,7 +837,7 @@
          for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
          for c = (sqrt (+ (* x x) (* y y)))
          collect (list (vector x y) (vector (if (> c diameter) 0 1))))))
-     
+
 (defun circle-training-1hs (count)
   "First output represents 'yes', second output 'no'"
   (loop with diameter = 0.429
@@ -850,7 +874,7 @@
 (defun generate-counting-data (n)
   (loop for a from 1 to n
      for digit = (random 10)
-     for input-lit = (loop with places = nil 
+     for input-lit = (loop with places = nil
                   for b from 1 to digit
                   for place = (loop for x = (random 10)
                                  while (member x places)
@@ -862,7 +886,7 @@
      collect (list (map 'vector 'identity input)
                    (map 'vector 'identity output))))
 
-(defun make-segment-file-names (file 
+(defun make-segment-file-names (file
                                 file-line-count
                                 segment-line-count
                                 &optional (target-directory "/tmp"))
@@ -875,13 +899,15 @@
               target-directory
               (format nil "~a-~4,'0d.~a" name a extension))))
 
-(defun make-training-segments (file &optional (max-segment-size 100000))
+(defun make-training-segments
+    (file &optional (max-segment-size 100000) (target-directory "/tmp"))
   (let* ((line-count (file-line-count file))
          (average-line-size (truncate (float (lof file)) line-count))
-         (segment-line-count (truncate max-segment-size average-line-size))
+         (segment-line-count (truncate (float max-segment-size) average-line-size))
          (segment-file-names (make-segment-file-names file
                                                       line-count
-                                                      segment-line-count)))
+                                                      segment-line-count
+                                                      target-directory)))
     (with-open-file (in file)
       (loop for file in segment-file-names
          do (with-open-file (out file :direction :output :if-exists :supersede)
@@ -890,5 +916,5 @@
                  when line do
                    (write-line line out)
                    (incf line-count)
-                 while (and line (<= line-count segment-line-count))))))))
-            
+                 while (and line (<= line-count segment-line-count))))))
+    segment-file-names))
