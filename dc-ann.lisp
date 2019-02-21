@@ -154,6 +154,10 @@
    (output-labels :accessor output-labels :initarg :output-labels :initform nil)
    (training-segments :accessor training-segments :type list
                       :initarg :training-segments :initform nil)
+   (last-training-segment :accessor last-training-segment
+                          :type string :initform nil)
+   (last-tset :accessor last-tset :type list :initform nil)
+   (mutexx :accessor mutexx :initform (make-mutex :name "mutexx"))
    (learning-rate :accessor learning-rate :initarg :learning-rate :initform 0.3)
    (momentum :accessor momentum :initarg :momentum :initform 0.8)
    (wi :accessor wi :initform 0)
@@ -340,16 +344,18 @@
 
 (defgeneric feed (t-net inputs)
   (:method ((net t-net) (inputs list))
-    (feed net (map 'vector 'identity inputs)))
+    (with-mutex ((mutexx net))
+      (feed net (map 'vector 'identity inputs))))
   (:method ((net t-net) (inputs vector))
-    ;; Copy input values to input layer
-    (loop for input across inputs
-       for neuron across (neuron-array (input-layer net))
-       do (setf (input neuron) input))
-    ;; Feed forward
-    (fire net)
-    ;; Return a vector with the output value of each output-layer neuron
-    (map 'vector 'output (neuron-array (output-layer net)))))
+    (with-mutex ((mutexx net))
+      ;; Copy input values to input layer
+      (loop for input across inputs
+         for neuron across (neuron-array (input-layer net))
+         do (setf (input neuron) input))
+      ;; Feed forward
+      (fire net)
+      ;; Return a vector with the output value of each output-layer neuron
+      (map 'vector 'output (neuron-array (output-layer net))))))
 
 (defgeneric winner (t-net inputs)
   (:method ((net t-net) (inputs list))
@@ -472,7 +478,7 @@
                    (let ((mse (if error-collection
                                   (/ (apply '+ error-collection)
                                      (float (length error-collection)))
-                                  1.0)))
+                                  10.0)))
                      (funcall report-function
                               :net net
                               :elapsed (elapsed start-time)
@@ -540,7 +546,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~as ~ai ~4$ < ~5$ > ~4$"
+                     (format nil "~as ~ai ~4$ < ~4$ > ~4$"
                              elapsed iteration
                              (min-mse net) mse (max-mse net)))))
 
@@ -552,7 +558,7 @@
                           :if-exists :append
                           :if-does-not-exist :create)
     (write-log-entry stream
-                     (format nil "~a ~as ~ai ~4$ < ~5$ > ~4$"
+                     (format nil "~a ~as ~ai ~4$ < ~4$ > ~4$"
                              status elapsed iteration
                              (min-mse net) mse (max-mse net)))))
 
@@ -568,20 +574,19 @@
                             log-file
                             status-function
                             randomize-weights)
-  (setf (log-file net)
-        (if log-file
-            log-file
-            (format nil "/tmp/training-~a.log" (id net))))
-  (setf (training-segments net) (make-training-segments
-                                 tset
-                                 max-segment-size))
-  (setf (max-mse net) -1000000.0)
-  (setf (min-mse net) 1000000.0)
-  (setf (last-anneal-iteration net) 0)
-  (setf (anneal net) nil)
-  (setf (randomize net) nil)
-  (setf (stop-training net) nil)
-  (setf (shock net) nil)
+  (setf (log-file net) (if log-file
+                           log-file
+                           (format nil "/tmp/training-~a.log" 
+                                   (string-downcase (id net))))
+
+        (training-segments net) (make-training-segments tset max-segment-size)
+        (max-mse net) -1000000.0
+        (min-mse net) 1000000.0
+        (last-anneal-iteration net) 0
+        (anneal net) nil
+        (randomize net) nil
+        (stop-training net) nil
+        (shock net) nil)
   (when status-function
     (funcall status-function
              :net net
@@ -628,7 +633,7 @@
   (:method ((net t-net)
             (t-set string)
             &key
-              (max-segment-size 100000)
+              (max-segment-size 1000000)
               outputs-first
               output-labels
               (target-mse 0.08)
@@ -659,14 +664,14 @@
             (truncate (* (/ report-frequency 1000.0)
                          internal-time-units-per-second))
           for i from 1 to max-iterations
-          for mse = 1.0 then (present-vectors
-                              net
-                              outputs-first
-                              output-labels
-                              i
-                              start-time
-                              report-function
-                              time-span-between-reports)
+          for mse = 10.0 then (present-vectors
+                               net
+                               outputs-first
+                               output-labels
+                               i
+                               start-time
+                               report-function
+                               time-span-between-reports)
           while (and (> mse target-mse) (not (stop-training net)))
           when (or
                 (and (> i 1)
@@ -766,44 +771,47 @@
     layer))
 
 (defun read-data (net csv-file &key outputs-first limit output-labels)
-  (let (tset)
-    (with-lines-in-file (row csv-file)
-      (when (not (zerop (length (trim row))))
-        (let* ((values (split-n-trim row :on-regex ","))
-               (numbers (cond ((and outputs-first output-labels)
-                               (cons (car values)
-                                     (mapcar #'parse-number (cdr values))))
-                              (output-labels
-                               (append (mapcar #'parse-number (butlast values))
-                                       (last values)))
-                              (t (mapcar #'parse-number values))))
-               inputs
-               outputs)
-          (if outputs-first
-              (setf outputs (if output-labels
-                                (car numbers)
-                                (subseq numbers 0 (length (outputs net))))
-                    inputs (if output-labels
-                               (cdr numbers)
-                               (subseq numbers (length (outputs net)))))
-              (setf inputs (if output-labels
-                               (butlast numbers)
-                               (subseq numbers 0 (car (topology net))))
-                    outputs (if output-labels
-                                (car (last numbers))
-                                (subseq numbers (car (topology net))))))
-          (when output-labels
-            (setf outputs (loop with position = (position outputs output-labels
-                                                          :test 'equal)
-                             for a from 0 below (length (outputs net))
-                             collect (if (= a position) 1.0 0.0))))
-          (let ((input-vector (apply #'vector inputs))
-                (output-vector (apply #'vector outputs)))
-            (push (list input-vector output-vector) tset))))
-        (when limit
-          (decf limit)
-          (when (zerop limit) (return tset))))
-    tset))
+  (if (equal (last-training-segment net) csv-file)
+      (last-tset net)
+      (let (tset)
+        (with-lines-in-file (row csv-file)
+          (when (not (zerop (length (trim row))))
+            (let* ((values (split-n-trim row :on-regex ","))
+                   (numbers (cond ((and outputs-first output-labels)
+                                   (cons (car values)
+                                         (mapcar #'parse-number (cdr values))))
+                                  (output-labels
+                                   (append (mapcar #'parse-number (butlast values))
+                                           (last values)))
+                                  (t (mapcar #'parse-number values))))
+                   inputs
+                   outputs)
+              (if outputs-first
+                  (setf outputs (if output-labels
+                                    (car numbers)
+                                    (subseq numbers 0 (length (outputs net))))
+                        inputs (if output-labels
+                                   (cdr numbers)
+                                   (subseq numbers (length (outputs net)))))
+                  (setf inputs (if output-labels
+                                   (butlast numbers)
+                                   (subseq numbers 0 (car (topology net))))
+                        outputs (if output-labels
+                                    (car (last numbers))
+                                    (subseq numbers (car (topology net))))))
+              (when output-labels
+                (setf outputs (loop with position = (position outputs output-labels
+                                                              :test 'equal)
+                                 for a from 0 below (length (outputs net))
+                                 collect (if (= a position) 1.0 0.0))))
+              (let ((input-vector (apply #'vector inputs))
+                    (output-vector (apply #'vector outputs)))
+                (push (list input-vector output-vector) tset))))
+          (when limit
+            (decf limit)
+            (when (zerop limit) (return tset))))
+        (setf (last-training-segment net) csv-file)
+        (setf (last-tset net) tset))))
 
 (defun evaluate-training (net test-set)
   (let ((total 0.0)
@@ -819,44 +827,18 @@
              (incf correct)))
        finally (return (/ (truncate (* (/ correct total) 10000)) 100.0)))))
 
-(defun circle-training (count &key stats)
-  (if stats
-      (loop for a from 1 to count
-         for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
-         for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
-         for c = (sqrt (+ (* x x) (* y y)))
-         maximizing x into maxx
-         maximizing y into maxy
-         minimizing x into minx
-         minimizing y into miny
-         summing c into sumc
-         finally (return (list :max-x maxx :max-y maxy
-                               :min-x minx :min-y miny
-                               :average-diameter (/ sumc count))))
-      (loop with diameter = 0.429
-         for a from 1 to count
-         for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
-         for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
-         for c = (sqrt (+ (* x x) (* y y)))
-         collect (list (vector x y) (vector (if (> c diameter) 0 1))))))
-
-(defun circle-training-1hs (count)
-  "First output represents 'yes', second output 'no'"
-  (loop with diameter = 0.429
-     for a from 1 to count
-     for x = (* (if (zerop (random 2)) 1 0) (random 1.0))
-     for y = (* (if (zerop (random 2)) 1 0) (random 1.0))
-     for c = (sqrt (+ (* x x) (* y y)))
-     collect (list (vector x y)
-                   (if (> c diameter)
-                       (vector 0.0 1.0)
-                       (vector 1.0 0.0)))))
-
-(defun xor-training ()
-  (list (list #(0.0 0.0) #(1.0))
-        (list #(0.0 1.0) #(0.0))
-        (list #(1.0 0.0) #(0.0))
-        (list #(1.0 1.0) #(1.0))))
+(defun evaluate-one-hotshot-training (net test-set &optional show-fails)
+  (format nil "~,,2f% accurate"
+          (/ (loop for (inputs target-outputs) in test-set
+                for target-output-winner = (index-of-max target-outputs)
+                for outputs = (map 'list 'identity (feed net inputs))
+                for output-winner = (index-of-max outputs)
+                when (and show-fails
+                          (not (= output-winner target-output-winner)))
+                do (format t "~a ~a~%" inputs outputs)
+                when (= output-winner target-output-winner)
+                summing 1)
+             (float (length test-set)))))
 
 (defun evaluate-label-training (net presentation)
   (let* ((max (apply #'max (map 'list 'identity (second presentation))))
@@ -865,28 +847,6 @@
          (rmax (apply #'max (map 'list 'identity output)))
          (result (position rmax output)))
     (list :target target :result result)))
-
-(defun xor-training-1hs ()
-  "First output represents 'yes', second output 'no'"
-  (list (list #(0.0 0.0) #(1.0 0.0))
-        (list #(0.0 1.0) #(0.0 1.0))
-        (list #(1.0 0.0) #(0.0 1.0))
-        (list #(1.0 1.0) #(1.0 0.0))))
-
-(defun generate-counting-data (n)
-  (loop for a from 1 to n
-     for digit = (random 10)
-     for input-lit = (loop with places = nil
-                  for b from 1 to digit
-                  for place = (loop for x = (random 10)
-                                 while (member x places)
-                                 finally (return x))
-                  do (push place places)
-                  collect place)
-     for output = (loop for a from 0 below 10 collect (if (= a digit) 1 0))
-     for input = (loop for c from 0 to 9 collect (if (member c input-lit) 1 0))
-     collect (list (map 'vector 'identity input)
-                   (map 'vector 'identity output))))
 
 (defun make-segment-file-names (file
                                 file-line-count
@@ -924,3 +884,11 @@
 (defun clear-segments (net)
   (loop for segment in (training-segments net)
        do (delete-file segment)))
+
+(defun tset-to-file (t-set &optional (filename (unique-file-name :extension ".ann.csv")))
+  (with-open-file (o filename :direction :output :if-exists :supersede)
+    (loop for row in t-set do
+         (loop for value across (concatenate 'vector (first row) (second row))
+            collect value into values
+            finally (format o "~{~d~^,~}~%" values))))
+  filename)
