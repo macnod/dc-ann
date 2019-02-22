@@ -165,8 +165,8 @@
                  :initarg :transfer-tag :initform :logistic)
    (layers :accessor layers)
    (next-id :accessor next-id :initform 0)
-   (min-mse :accessor min-mse :type real :initform 1000000.0)
-   (max-mse :accessor max-mse :type real :initform -1000000.0)
+   (min-mse :accessor min-mse :type real :initform 1000.0)
+   (max-mse :accessor max-mse :type real :initform -1000.0)
    (mse-list :accessor mse-list :type list :initform nil)
    (id :reader id :initarg :id :type string :initform (unique-name))
    (log-file :accessor log-file :type string :initform nil)
@@ -469,16 +469,16 @@
                  for vector-error = (learn-vector (first presentation)
                                                   (second presentation)
                                                   net)
+                 while (not (stop-training net))
                  when (and report-function
                            (or (null (last-report-time net))
                                (>= (- (get-internal-real-time)
                                       (last-report-time net))
-                                   time-span-between-reports)))
+                                   time-span-between-reports))
+                           error-collection)
                  do
-                   (let ((mse (if error-collection
-                                  (/ (apply '+ error-collection)
-                                     (float (length error-collection)))
-                                  10.0)))
+                   (let ((mse (/ (apply '+ error-collection)
+                                 (float (length error-collection)))))
                      (funcall report-function
                               :net net
                               :elapsed (elapsed start-time)
@@ -580,8 +580,8 @@
                                    (string-downcase (id net))))
 
         (training-segments net) (make-training-segments tset max-segment-size)
-        (max-mse net) -1000000.0
-        (min-mse net) 1000000.0
+        (max-mse net) -1000.0
+        (min-mse net) 1000.0
         (last-anneal-iteration net) 0
         (anneal net) nil
         (randomize net) nil
@@ -593,7 +593,7 @@
              :status "learning"
              :elapsed 0
              :iteration 0
-             :mse 1.0))
+             :mse (min-mse net)))
   (when randomize-weights
     (if (listp randomize-weights)
         (apply #'randomize-weights (cons net randomize-weights))
@@ -664,14 +664,15 @@
             (truncate (* (/ report-frequency 1000.0)
                          internal-time-units-per-second))
           for i from 1 to max-iterations
-          for mse = 10.0 then (present-vectors
-                               net
-                               outputs-first
-                               output-labels
-                               i
-                               start-time
-                               report-function
-                               time-span-between-reports)
+          for mse = (min-mse net) 
+          then (present-vectors
+                net
+                outputs-first
+                output-labels
+                i
+                start-time
+                report-function
+                time-span-between-reports)
           while (and (> mse target-mse) (not (stop-training net)))
           when (or
                 (and (> i 1)
@@ -885,7 +886,11 @@
   (loop for segment in (training-segments net)
        do (delete-file segment)))
 
-(defun tset-to-file (t-set &optional (filename (unique-file-name :extension ".ann.csv")))
+(defun tset-to-file 
+    (net t-set &optional
+                 (filename 
+                  (unique-file-name 
+                   :extension (format nil ".~a.annt" (id net)))))
   (with-open-file (o filename :direction :output :if-exists :supersede)
     (loop for row in t-set do
          (loop for value across (concatenate 'vector (first row) (second row))
