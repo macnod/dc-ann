@@ -1,4 +1,4 @@
-;;;; package.lisp
+;;;; dc-ann-package.lisp
 
 (defpackage :dc-ann
   (:use :cl :dc-utilities :sb-thread :cl-ppcre)

@@ -344,8 +344,7 @@
 
 (defgeneric feed (t-net inputs)
   (:method ((net t-net) (inputs list))
-    (with-mutex ((mutexx net))
-      (feed net (map 'vector 'identity inputs))))
+    (feed net (map 'vector 'identity inputs)))
   (:method ((net t-net) (inputs vector))
     (with-mutex ((mutexx net))
       ;; Copy input values to input layer
@@ -449,6 +448,7 @@
 (defgeneric present-vectors (t-net
                              outputs-first
                              output-labels
+                             has-header
                              iteration
                              start-time
                              report-function
@@ -456,6 +456,7 @@
   (:method ((net t-net)
             outputs-first
             (output-labels list)
+            (has-header t)
             (iteration integer)
             (start-time integer)
             (report-function function)
@@ -463,7 +464,8 @@
     (loop for training-segment in (shuffle (training-segments net))
        for t-set = (read-data net training-segment
                               :outputs-first outputs-first
-                              :output-labels output-labels)
+                              :output-labels output-labels
+                              :has-header has-header)
        append (loop
                  for presentation in t-set
                  for vector-error = (learn-vector (first presentation)
@@ -633,9 +635,10 @@
   (:method ((net t-net)
             (t-set string)
             &key
-              (max-segment-size 1000000)
+              (max-segment-size 100000000)
               outputs-first
               output-labels
+              has-header
               (target-mse 0.08)
               (max-iterations 1000000)
               (report-frequency 1000)
@@ -669,6 +672,7 @@
                 net
                 outputs-first
                 output-labels
+                has-header
                 i
                 start-time
                 report-function
@@ -703,7 +707,7 @@
                                   :iterations i
                                   :error mse
                                   :status status)))))
-     :name (format nil "training-~a" (id net))))
+     :name (format nil "training-~(~a~)" (id net))))
   (:documentation "This function uses the standard backprogation of error method to train the neural network on the given sample set within the given constraints. Training is achieved when the target error reaches a level that is equal to or below the given target-mse value, within the given number of iterations. The function returns t if training is achieved and nil otherwise. If training is not achieved, the caller can call again to train for additional iterations. If randomize-weights is set to true or to a value like '(:min -1.0 :max 1.0), which is the default, then the function starts training from scratch. Otherwise, if randomize-weights is set to nil, training resumes from where it left of in the last call.  This function accepts callback parameters that allow the function to periodically report on the progress of training. t-net is a list of training vectors. Each training vector consists of a list that contains an input vector and an output vector.  Here's an example for the exclusive-or problem:
     (list (#(0 0) #(1))
           (#(0 1) #(0))
@@ -771,46 +775,50 @@
          (setf (y-coor neuron) y))
     layer))
 
-(defun read-data (net csv-file &key outputs-first limit output-labels)
+(defun read-data (net csv-file &key outputs-first limit output-labels has-header)
   (if (equal (last-training-segment net) csv-file)
       (last-tset net)
-      (let (tset)
+      (let (tset past-header)
         (with-lines-in-file (row csv-file)
-          (when (not (zerop (length (trim row))))
-            (let* ((values (split-n-trim row :on-regex ","))
-                   (numbers (cond ((and outputs-first output-labels)
-                                   (cons (car values)
-                                         (mapcar #'parse-number (cdr values))))
-                                  (output-labels
-                                   (append (mapcar #'parse-number (butlast values))
-                                           (last values)))
-                                  (t (mapcar #'parse-number values))))
-                   inputs
-                   outputs)
-              (if outputs-first
-                  (setf outputs (if output-labels
-                                    (car numbers)
-                                    (subseq numbers 0 (length (outputs net))))
-                        inputs (if output-labels
-                                   (cdr numbers)
-                                   (subseq numbers (length (outputs net)))))
-                  (setf inputs (if output-labels
-                                   (butlast numbers)
-                                   (subseq numbers 0 (car (topology net))))
-                        outputs (if output-labels
-                                    (car (last numbers))
-                                    (subseq numbers (car (topology net))))))
-              (when output-labels
-                (setf outputs (loop with position = (position outputs output-labels
-                                                              :test 'equal)
-                                 for a from 0 below (length (outputs net))
-                                 collect (if (= a position) 1.0 0.0))))
-              (let ((input-vector (apply #'vector inputs))
-                    (output-vector (apply #'vector outputs)))
-                (push (list input-vector output-vector) tset))))
-          (when limit
-            (decf limit)
-            (when (zerop limit) (return tset))))
+          (if (or (and has-header past-header)
+                  (not has-header))
+              (progn
+                (when (not (zerop (length (trim row))))
+                  (let* ((values (split-n-trim row :on-regex ","))
+                         (numbers (cond ((and outputs-first output-labels)
+                                         (cons (car values)
+                                               (mapcar #'parse-number (cdr values))))
+                                        (output-labels
+                                         (append (mapcar #'parse-number (butlast values))
+                                                 (last values)))
+                                        (t (mapcar #'parse-number values))))
+                         inputs
+                         outputs)
+                    (if outputs-first
+                        (setf outputs (if output-labels
+                                          (car numbers)
+                                          (subseq numbers 0 (length (outputs net))))
+                              inputs (if output-labels
+                                         (cdr numbers)
+                                         (subseq numbers (length (outputs net)))))
+                        (setf inputs (if output-labels
+                                         (butlast numbers)
+                                         (subseq numbers 0 (car (topology net))))
+                              outputs (if output-labels
+                                          (car (last numbers))
+                                          (subseq numbers (car (topology net))))))
+                    (when output-labels
+                      (setf outputs (loop with position = (position outputs output-labels
+                                                                    :test 'equal)
+                                       for a from 0 below (length (outputs net))
+                                       collect (if (= a position) 1.0 0.0))))
+                    (let ((input-vector (apply #'vector inputs))
+                          (output-vector (apply #'vector outputs)))
+                      (push (list input-vector output-vector) tset))))
+                (when limit
+                  (decf limit)
+                  (when (zerop limit) (return tset))))
+              (setf past-header t)))
         (setf (last-training-segment net) csv-file)
         (setf (last-tset net) tset))))
 
@@ -863,7 +871,7 @@
               (format nil "~a-~4,'0d.~a" name a extension))))
 
 (defun make-training-segments
-    (file &optional (max-segment-size 100000) (target-directory "/tmp"))
+    (file &optional (max-segment-size 100000000) (target-directory "/tmp"))
   (let* ((line-count (file-line-count file))
          (average-line-size (truncate (float (lof file)) line-count))
          (segment-line-count (truncate (float max-segment-size) average-line-size))
