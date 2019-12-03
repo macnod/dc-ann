@@ -6,6 +6,6 @@
   :license "MIT License"
   :depends-on (#:dc-utilities)
   :serial t
-  :components ((:file "package")
+  :components ((:file "dc-ann-package")
                (:file "dc-ann")))
 

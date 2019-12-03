@@ -228,6 +228,12 @@
   net)
 
 (defmethod initialize-instance :after ((net t-net) &key)
+  (unless (log-file net)
+    (setf (log-file net) (format nil "/tmp/~a-~a.log" 
+                                 (string-downcase (id net))
+                                 (unique-name)))
+    (with-open-file (f (log-file net) :direction :output :if-exists :supersede)
+      nil))
   (setf (layers net)
         (loop with output-layer-index = (1- (length (topology net)))
            for layer-spec in (topology net)
@@ -326,11 +332,17 @@
                    (setf (input neuron) 0.0))
                  (setf (input neuron) 0.0)))))
 
+(defun bounded (x) x)
+  ;; (if (< x 0)
+  ;;     (max -1e-10 x)
+  ;;     (min 1e10 x)))
+
 (defgeneric fire (object)
   (:method ((neuron t-neuron))
     (transfer neuron)
     (loop for cx in (cxs neuron)
-       do (incf (input (target cx)) (* (weight cx) (output neuron))))
+       do (incf (input (target cx)) (* (bounded (weight cx))
+                                       (bounded (output neuron)))))
     neuron)
   (:method ((layer t-layer))
     (when (not (eql (layer-type layer) :output))
@@ -374,9 +386,9 @@
      for target-neuron = (target cx)
      do (setf (err target-neuron)
               (* (- (expected-output target-neuron)
-                    (output target-neuron))
+                    (bounded (output target-neuron)))
                  (funcall (transfer-derivative target-neuron)
-                          (output target-neuron))))))
+                          (bounded (output target-neuron)))))))
 
 (defun backprop-hidden (neuron)
   (loop
@@ -384,9 +396,10 @@
      for target-neuron = (target cx)
      do (setf (err target-neuron)
               (* (loop for cx in (cxs target-neuron)
-                    summing (* (weight cx) (err (target cx))))
+                    summing (* (bounded (weight cx)) 
+                               (bounded (err (target cx)))))
                  (funcall (transfer-derivative target-neuron)
-                          (output target-neuron))))))
+                          (bounded (output target-neuron)))))))
 
 (defgeneric backprop (component)
   (:method ((neuron t-neuron))
@@ -509,7 +522,7 @@
     (loop for neuron across (neuron-array layer)
        do (randomize-weights neuron :max max :min min))
     layer)
-  (:method ((net t-net) &key (max 1.0) (min (- max)))
+  (:method ((net t-net) &key (max 0.9) (min 0.1))
     (declare (real max min))
     (loop for layer in (layers net) do
          (randomize-weights layer :max max :min min))
@@ -572,16 +585,14 @@
 
 (defun initialize-training (net
                             tset
-                            max-segment-size
+                            &key
+                            (max-segment-size (truncate 1e8))
                             log-file
-                            status-function
+                            (status-function #'default-status-function)
                             randomize-weights)
-  (setf (log-file net) (if log-file
-                           log-file
-                           (format nil "/tmp/training-~a.log" 
-                                   (string-downcase (id net))))
-
-        (training-segments net) (make-training-segments tset max-segment-size)
+  (when log-file
+    (setf (log-file net) log-file))
+  (setf (training-segments net) (make-training-segments tset max-segment-size)
         (max-mse net) -1000.0
         (min-mse net) 1000.0
         (last-anneal-iteration net) 0
@@ -645,7 +656,7 @@
               (report-function #'default-report-function)
               (status-function #'default-status-function)
               (logger-function #'default-logger-function)
-              (randomize-weights '(:max 1.0 :min -1.0))
+              randomize-weights
               (annealing nil)
               (rerandomize-weights nil)
               (log-file nil)
@@ -658,10 +669,10 @@
        (loop
           initially (initialize-training net
                                          t-set
-                                         max-segment-size
-                                         log-file
-                                         status-function
-                                         randomize-weights)
+                                         :max-segment-size max-segment-size
+                                         :log-file log-file
+                                         :status-function status-function
+                                         :randomize-weights randomize-weights)
           with start-time = (get-universal-time)
           with time-span-between-reports =
             (truncate (* (/ report-frequency 1000.0)
@@ -905,3 +916,39 @@
             collect value into values
             finally (format o "~{~d~^,~}~%" values))))
   filename)
+
+(defmethod weight-data ((net t-net))
+  (let* ((cx-weights (loop for layer in (butlast (dc-ann::layers dc::*xor*))
+                        for layer-index = 1 then (1+ layer-index)
+                        for cx-index = 0
+                        collect 
+                          (list
+                           (format nil "layer-~a" layer-index)
+                           (loop for neuron across (dc-ann::neuron-array layer)
+                              appending
+                                (loop for cx in (dc-ann::cxs neuron)
+                                   do (incf cx-index)
+                                   collect 
+                                     (list (float cx-index)
+                                           (float (dc-ann::weight cx))))))))
+         (cx-count (apply #'max (mapcar (lambda (w) (length (second w))) 
+                                        cx-weights))))
+    (loop for row in (reverse cx-weights)
+       for rev = (reverse (second row))
+       do (loop while (< (length rev) cx-count)
+             do (push (list (float (1+ (length rev))) 0.0) rev))
+       collect (list (car row) (reverse rev)))))
+
+(defmethod chart-weight-data ((net t-net))
+  (dc-utilities::chart 
+    (:line 600 400)
+    (loop for row in (weight-data net)
+       do (apply #'dc-utilities::add-series row))
+    (dc-utilities::set-axis :x "cx")
+    (dc-utilities::set-axis 
+     :y "w" 
+     :label-formatter (lambda (l) 
+                        (let ((label (format nil "~,2f" l)))
+                          (if (ppcre:scan "\\.[05]0$" label)
+                              label
+                              ""))))))
