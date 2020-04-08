@@ -918,7 +918,7 @@
   filename)
 
 (defmethod weight-data ((net t-net))
-  (let* ((cx-weights (loop for layer in (butlast (dc-ann::layers dc::*xor*))
+  (let* ((cx-weights (loop for layer in (butlast (dc-ann::layers net))
                         for layer-index = 1 then (1+ layer-index)
                         for cx-index = 0
                         collect 
