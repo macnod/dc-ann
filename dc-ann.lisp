@@ -285,24 +285,29 @@
           (* e (funcall (derivative (transfer-function neuron))
                         (output neuron))))))
 
+(defun signed-limit (value limit)
+  (if (< (abs value) limit) value (* (signum value) limit)))
+
+(defun limit-extent (value)
+  (let ((extent 1e6))
+    (if (<= (abs value) extent) value (* (signum value) extent))))
+
+(defun limit-precision (value)
+  (let ((precision 1e-6))
+    (if (< (abs value) precision) (* (signum value) precision) value)))
+
 (defmethod update-neuron-weights ((neuron t-neuron))
   (loop 
-     with max-weight = 1e6
      with learning-rate = (learning-rate (net neuron))
      and momentum = (momentum (net neuron))
      and output = (output neuron)
      for cx in (cxs neuron)
      for err = (err (target cx))
      for delta = (* learning-rate err output)
-     for new-weight = (+ (weight cx) (+ delta (* momentum (delta cx))))
-     for range-limited-weight = (if (< (abs new-weight) max-weight) 
-                                    new-weight 
-                                    (* (signum new-weight) max-weight))
-     for precision-
-     do (setf (weight cx) (if (< (abs new-weight) max-weight) 
-                              new-weight 
-                              (* (signum new-weight) max-weight))
-              (delta cx) delta)))
+     for limited-weight = (limit-precision
+                           (limit-extent
+                            (+ (weight cx) (+ delta (* momentum (delta cx))))))
+     do (setf (weight cx) limited-weight)))
   
 (defmethod backprop (net)
   (loop for layer in (reverse (layers net)) do
@@ -705,35 +710,40 @@
                (weight cx) 
                (delta cx))))
 
-(defun train-1 ()
+(defun train-1 (transfer-tag)
   (loop 
      with max-time = 30
      and max-iterations = 10000
-     and target-mse = 0.15
-     ;; and transfer-tag = :logistic
-     ;; and weight-min = -0.9
-     ;; and weight-max = 0.9
-     and transfer-tag = :relu
-     and weight-min = 0.45
-     and weight-max = 0.55
-     and sample-count = 100000
+     and target-mse = 0.05
+     and weight-min = (case transfer-tag 
+                        (:logistic -0.9)
+                        (:relu -0.9)
+                        (:relu-leaky -0.9))
+     and weight-max = (case transfer-tag
+                        (:logistic 0.9)
+                        (:relu 0.9)
+                        (:relu-leaky 0.9))
+     and sample-count = 1000
      and reporting-frequency = 2
      with net = (make-instance 't-net :id :net1
                                :topology `((:count 2 :transfer ,transfer-tag)
-                                           (:count 10 :transfer ,transfer-tag)
-                                           (:count 10 :transfer ,transfer-tag)
+                                           (:count 32 :transfer ,transfer-tag)
+                                           (:count 16 :transfer ,transfer-tag)
+                                           (:count 8 :transfer ,transfer-tag)
+                                           (:count 4 :transfer ,transfer-tag)
                                            (:count 2 :transfer :logistic)))
      and time-tracker = (make-time-tracker)
      with training-set-raw = (circle-data-1hs net sample-count)
      with training-set-vec = (map 'vector 'identity training-set-raw)
      with training-set-indices = (loop for a from 0 below (length training-set-vec) collect a)
+     with network-error-set = (circle-data-1hs net 100)
      initially
        (randomize-weights net :min weight-min :max weight-max)
        (format t "~a~%" (evaluate-training-1hs net (circle-data-1hs net 1000)))
        (mark-time time-tracker :train-1)
        (mark-time time-tracker :train-2)
      for iteration = 1 then (1+ iteration)
-     for network-error = 1.0 then (network-error net training-set-raw)
+     for network-error = 1.0 then (network-error net network-error-set)
      for the-end = (cond ((< network-error target-mse) :trained)
                          ((> (elapsed-time time-tracker :train-1) max-time) :max-time)
                          ((> iteration max-iterations) :max-iterations)
@@ -750,7 +760,7 @@
               (render-weights net
                               iteration
                               (elapsed-time time-tracker :train-1)
-                              (network-error net training-set-raw))
+                              (network-error net network-error-set))
               (mark-time time-tracker :train-2)))
      finally (progn
                (format t "~a t=~f e=~f i=~d~%"
