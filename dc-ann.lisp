@@ -19,6 +19,15 @@
                      :transfer (lambda (x) (/ 1.0 (1+ (exp (- x)))))
                      :derivative (lambda (x) (* x (- 1 x)))))
 
+(setf (gethash :bound-logistic *transfer-functions*)
+      (make-instance 't-transfer-function 
+                     :name :bound-logistic
+                     :transfer (lambda (x) 
+                                 (cond ((< x -80) 0.0)
+                                       ((> x 80) 1.0)
+                                       (t (/ 1.0 (1+ (exp (- x)))))))
+                     :derivative (lambda (x) (* x (- 1 x)))))
+
 (setf (gethash :relu *transfer-functions*)
       (make-instance 't-transfer-function 
                      :name :relu
@@ -710,30 +719,30 @@
                (weight cx) 
                (delta cx))))
 
-(defun train-1 (transfer-tag)
+(defun train-1 (&key (transfer :relu)
+                  (max-time 30)
+                  (max-iterations 1000)
+                  (target-mse 0.05)
+                  (sample-size 10000)
+                  (reporting-frequency 2)
+                  (weight-max (case transfer
+                                (:logistic 0.9)
+                                (:relu 0.9)
+                                (:relu-leaky 0.9)))
+                  (weight-min (case transfer
+                                (:logistic -0.9)
+                                (:relu -0.9)
+                                (:relu-leaky -0.9))))
   (loop 
-     with max-time = 30
-     and max-iterations = 10000
-     and target-mse = 0.05
-     and weight-min = (case transfer-tag 
-                        (:logistic -0.9)
-                        (:relu -0.9)
-                        (:relu-leaky -0.9))
-     and weight-max = (case transfer-tag
-                        (:logistic 0.9)
-                        (:relu 0.9)
-                        (:relu-leaky 0.9))
-     and sample-count = 1000
-     and reporting-frequency = 2
      with net = (make-instance 't-net :id :net1
-                               :topology `((:count 2 :transfer ,transfer-tag)
-                                           (:count 32 :transfer ,transfer-tag)
-                                           (:count 16 :transfer ,transfer-tag)
-                                           (:count 8 :transfer ,transfer-tag)
-                                           (:count 4 :transfer ,transfer-tag)
-                                           (:count 2 :transfer :logistic)))
+                               :topology `((:count 2 :transfer ,transfer)
+                                           (:count 32 :transfer ,transfer)
+                                           (:count 16 :transfer ,transfer)
+                                           (:count 8 :transfer ,transfer)
+                                           (:count 4 :transfer ,transfer)
+                                           (:count 2 :transfer :bound-logistic)))
      and time-tracker = (make-time-tracker)
-     with training-set-raw = (circle-data-1hs net sample-count)
+     with training-set-raw = (circle-data-1hs net sample-size)
      with training-set-vec = (map 'vector 'identity training-set-raw)
      with training-set-indices = (loop for a from 0 below (length training-set-vec) collect a)
      with network-error-set = (circle-data-1hs net 100)
