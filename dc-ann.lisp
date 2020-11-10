@@ -718,6 +718,19 @@
                (if (biased (target cx)) 1 0)
                (weight cx) 
                (delta cx))))
+;; Example call:
+;;   (defparameter *net* (train-1 :transfer :relu 
+;;                                :hidden-layers 6 
+;;                                :sample-size 1000 
+;;                                :subsample-size 1000 
+;;                                :max-time 300))
+;; Result:
+;;   layers=8; neurons=262; connections=11302; topology=(2 129 65 33 17 9 5 2)
+;;   (TOTAL 1000 CORRECT 558)
+;;   t=2.00 e=0.097550936 i=2 p=1547 rate=772.73
+;;   t=4.61 e=0.12872574 i=4 p=3045 rate=660.52
+;;   TRAINED t=7.07 e=0.028754089 i=5 p=4000
+;;   (TOTAL 1000 CORRECT 987)
 
 (defun train-1 (&key (transfer :relu)
                   (hidden-layers 4)
@@ -768,8 +781,12 @@
                          ((> (elapsed-time time-tracker :train-1) max-time) :max-time)
                          ((> iteration max-iterations) :max-iterations)
                          (t nil))
+     for indices = (shuffle net training-set-indices) then 
+       (if (zerop (mod iteration 10))
+           (shuffle net training-set-indices)
+           indices)
      until the-end do
-       (loop with indices = (shuffle net training-set-indices) 
+       (loop 
           for index in indices
           for count from 1 to (if (< sample-size subsample-size)
                                   sample-size 
@@ -786,17 +803,19 @@
                                   iteration
                                   (elapsed-time time-tracker :train-1)
                                   (network-error net network-error-set))
-                  (format t "t=~$ e=~f i=~d p=~d~%"
-                       (elapsed-time time-tracker :train-1)
-                       (network-error net training-set-raw)
-                       iteration
-                       presentations))
+                  (let ((elapsed (elapsed-time time-tracker :train-1)))
+                    (format t "t=~$ e=~f i=~d p=~d rate=~$~%"
+                            elapsed
+                            (network-error net training-set-raw)
+                            iteration
+                            presentations
+                            (/ presentations elapsed))))
               (mark-time time-tracker :train-2)))
-     finally (progn
+     finally (let ((e (network-error net training-set-raw)))
                (format t "~a t=~f e=~f i=~d p=~d~%"
                        the-end
                        (elapsed-time time-tracker :train-1)
-                       (network-error net training-set-raw)
+                       e
                        iteration
                        presentations)
                (format t "~a~%" (evaluate-training-1hs net (circle-data-1hs net 1000)))
