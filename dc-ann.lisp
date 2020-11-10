@@ -720,6 +720,8 @@
                (delta cx))))
 
 (defun train-1 (&key (transfer :relu)
+                  (hidden-layers 4)
+                  (render-weights nil)
                   (max-time 30)
                   (max-iterations 1000)
                   (target-mse 0.05)
@@ -732,22 +734,31 @@
                   (weight-min (case transfer
                                 (:logistic -0.9)
                                 (:relu -0.9)
-                                (:relu-leaky -0.9))))
-  (loop 
-     with net = (make-instance 't-net :id :net1
-                               :topology `((:count 2 :transfer ,transfer)
-                                           (:count 32 :transfer ,transfer)
-                                           (:count 16 :transfer ,transfer)
-                                           (:count 8 :transfer ,transfer)
-                                           (:count 4 :transfer ,transfer)
-                                           (:count 2 :transfer :bound-logistic)))
+                                (:relu-leaky -0.9)))
+                  (subsample-size 1000))
+  (loop with net = (make-instance 
+                    't-net 
+                    :id :net1
+                    :momentum 0.1
+                    :learning-rate 0.02
+                    :topology (topography 2 hidden-layers 2 transfer))
      and time-tracker = (make-time-tracker)
      with training-set-raw = (circle-data-1hs net sample-size)
      with training-set-vec = (map 'vector 'identity training-set-raw)
-     with training-set-indices = (loop for a from 0 below (length training-set-vec) collect a)
+     with training-set-indices = (loop for a from 0 below sample-size collect a)
      with network-error-set = (circle-data-1hs net 100)
+     with presentations = 0
      initially
        (randomize-weights net :min weight-min :max weight-max)
+       (format t "layers=~d; neurons=~d; connections=~d; topology=(~{~a~^ ~})~%"
+               (length (layers net))
+               (loop for layer in (layers net) summing
+                    (length (neurons layer)))
+               (loop for layer in (layers net) summing
+                    (loop for neuron in (neurons layer) summing
+                         (length (cxs neuron))))
+               (loop for layer in (layers net) collect 
+                    (length (neurons layer))))
        (format t "~a~%" (evaluate-training-1hs net (circle-data-1hs net 1000)))
        (mark-time time-tracker :train-1)
        (mark-time time-tracker :train-2)
@@ -758,25 +769,50 @@
                          ((> iteration max-iterations) :max-iterations)
                          (t nil))
      until the-end do
-       (loop with indices = (shuffle net training-set-indices)
+       (loop with indices = (shuffle net training-set-indices) 
           for index in indices
+          for count from 1 to (if (< sample-size subsample-size)
+                                  sample-size 
+                                  subsample-size)
           for example = (aref training-set-vec index)
           for inputs = (car example)
           for outputs = (cadr example)
           do 
             (learn-vector net inputs outputs)
+            (incf presentations)
             (when (> (elapsed-time time-tracker :train-2) reporting-frequency)
-              (render-weights net
-                              iteration
-                              (elapsed-time time-tracker :train-1)
-                              (network-error net network-error-set))
+              (if render-weights
+                  (render-weights net
+                                  iteration
+                                  (elapsed-time time-tracker :train-1)
+                                  (network-error net network-error-set))
+                  (format t "t=~$ e=~f i=~d p=~d~%"
+                       (elapsed-time time-tracker :train-1)
+                       (network-error net training-set-raw)
+                       iteration
+                       presentations))
               (mark-time time-tracker :train-2)))
      finally (progn
-               (format t "~a t=~f e=~f i=~d~%"
+               (format t "~a t=~f e=~f i=~d p=~d~%"
                        the-end
                        (elapsed-time time-tracker :train-1)
                        (network-error net training-set-raw)
-                       iteration)
+                       iteration
+                       presentations)
                (format t "~a~%" (evaluate-training-1hs net (circle-data-1hs net 1000)))
                (return net))))
-    
+
+(defun neurons-per-hidden-layer (hidden-layer-count)
+  (loop for layer-index from hidden-layer-count downto 1
+     collect (expt 2 (1+ layer-index))))
+
+(defun topography (input-count hidden-layer-count output-count transfer)
+  (loop with hidden-layer-neuron-counts = (neurons-per-hidden-layer hidden-layer-count)
+     for layer-index from 0 to (1+ hidden-layer-count)
+     collect (cond ((zerop layer-index)
+                    (list :count input-count :transfer transfer))
+                   ((equal layer-index (1+ hidden-layer-count))
+                    (list :count output-count :transfer :bound-logistic))
+                   (t (list :count (elt hidden-layer-neuron-counts (1- layer-index))
+                            :transfer transfer)))))
+       
