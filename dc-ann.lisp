@@ -732,6 +732,15 @@
 ;;   t=4.61 e=0.12872574 i=4 p=3045 rate=660.52
 ;;   TRAINED t=7.07 e=0.028754089 i=5 p=4000
 ;;   (TOTAL 1000 CORRECT 987)
+;;
+;; Profiling example:
+;;   ;; Set up
+;;   (sb-profile:profile set-inputs fire feed compute-neuron-error backprop network-error learn-vector)
+;;   ;; Check function list
+;;   (sb-profile:profile)
+;;   ;; Report
+;;   (sb-profile:report)
+;;
 (defun train-1 (&key (transfer :relu)
                   (hidden-layers 4)
                   (render-weights nil)
