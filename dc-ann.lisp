@@ -718,6 +718,7 @@
                (if (biased (target cx)) 1 0)
                (weight cx) 
                (delta cx))))
+
 ;; Example call:
 ;;   (defparameter *net* (train-1 :transfer :relu 
 ;;                                :hidden-layers 6 
@@ -731,7 +732,6 @@
 ;;   t=4.61 e=0.12872574 i=4 p=3045 rate=660.52
 ;;   TRAINED t=7.07 e=0.028754089 i=5 p=4000
 ;;   (TOTAL 1000 CORRECT 987)
-
 (defun train-1 (&key (transfer :relu)
                   (hidden-layers 4)
                   (render-weights nil)
@@ -781,10 +781,16 @@
                          ((> (elapsed-time time-tracker :train-1) max-time) :max-time)
                          ((> iteration max-iterations) :max-iterations)
                          (t nil))
-     for indices = (shuffle net training-set-indices) then 
-       (if (zerop (mod iteration 10))
-           (shuffle net training-set-indices)
-           indices)
+     for indices = (progn (mark-time time-tracker :train-3)
+                          (shuffle net training-set-indices)
+                          (format t "Shuffled in ~$ seconds~%"
+                                  (elapsed-time time-tracker :train-3)))
+     then (if (zerop (mod iteration 10))
+              (progn (mark-time time-tracker :train-3)
+                     (shuffle net training-set-indices)
+                     (format t "Shuffled in ~$ seconds~%"
+                             (elapsed-time time-tracker :train-3)))
+              indices)
      until the-end do
        (loop 
           for index in indices
