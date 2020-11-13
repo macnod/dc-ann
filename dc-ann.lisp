@@ -781,15 +781,9 @@
                          ((> (elapsed-time time-tracker :train-1) max-time) :max-time)
                          ((> iteration max-iterations) :max-iterations)
                          (t nil))
-     for indices = (progn (mark-time time-tracker :train-3)
-                          (shuffle net training-set-indices)
-                          (format t "Shuffled in ~$ seconds~%"
-                                  (elapsed-time time-tracker :train-3)))
+     for indices = (shuffle net training-set-indices)
      then (if (zerop (mod iteration 10))
-              (progn (mark-time time-tracker :train-3)
-                     (shuffle net training-set-indices)
-                     (format t "Shuffled in ~$ seconds~%"
-                             (elapsed-time time-tracker :train-3)))
+              (shuffle net training-set-indices)
               indices)
      until the-end do
        (loop 
