@@ -6,6 +6,35 @@
 
 (in-package :dc-ann)
 
+(defun logistic (x)
+  (cond ((> x 16.64) 1.0)
+        ((< x -88.7) 0.0)
+        ((< (abs x) 1e-8) 0.5)
+        (t (/ 1.0 (1+ (exp (- x)))))))
+
+(defun logistic-derivative (x)
+  (* x (- 1 x)))
+
+(defun bound-logistic (x)
+  (cond ((< x -80) 0.0)
+        ((> x 80) 1.0)
+        (t (/ 1.0 (1+ (exp (- x)))))))
+
+(defun bound-logistic-derivative (x)
+  (* x (- 1 x)))
+
+(defun relu (x)
+  (max 0 x))
+
+(defun relu-derivative (x)
+  (if (<= x 0.0) 0.0 1.0))
+
+(defun relu-leaky (x)
+  (max 0 x))
+
+(defun relu-leaky-derivative (x)
+  (if (<= x 0.0) 0.001 1.0))  
+                              
 (defclass t-transfer-function ()
   ((name :reader name :initarg :name :initform (error ":name required"))
    (transfer :reader transfer :initarg :transfer :initform (error ":transfer required"))
@@ -13,32 +42,17 @@
 
 (defparameter *transfer-functions* (make-hash-table))
 
-(setf (gethash :logistic *transfer-functions*)
-      (make-instance 't-transfer-function 
-                     :name :logistic
-                     :transfer (lambda (x) (/ 1.0 (1+ (exp (- x)))))
-                     :derivative (lambda (x) (* x (- 1 x)))))
-
-(setf (gethash :bound-logistic *transfer-functions*)
-      (make-instance 't-transfer-function 
-                     :name :bound-logistic
-                     :transfer (lambda (x) 
-                                 (cond ((< x -80) 0.0)
-                                       ((> x 80) 1.0)
-                                       (t (/ 1.0 (1+ (exp (- x)))))))
-                     :derivative (lambda (x) (* x (- 1 x)))))
-
-(setf (gethash :relu *transfer-functions*)
-      (make-instance 't-transfer-function 
-                     :name :relu
-                     :transfer (lambda (x) (max 0 x))
-                     :derivative (lambda (x) (if (<= x 0.0) 0.0 1.0))))
-
-(setf (gethash :relu-leaky *transfer-functions*)
-      (make-instance 't-transfer-function 
-                     :name :relu
-                     :transfer (lambda (x) (max 0 x))
-                     :derivative (lambda (x) (if (<= x 0.0) 0.001 1.0))))
+(loop with transfer-function-names = 
+     (list (list :logistic #'logistic #'logistic-derivative)
+           (list :bound-logistic #'bound-logistic #'bound-logistic-derivative)
+           (list :relu #'relu #'relu-derivative)
+           (list :relu-leaky #'relu-leaky #'relu-leaky-derivative))
+   for (name transfer derivative) in transfer-function-names
+   do (setf (gethash name *transfer-functions*)
+            (make-instance 't-transfer-function
+                           :name name
+                           :transfer transfer
+                           :derivative derivative)))
 
 (defclass t-cx ()
   ((target :reader target :initarg :target :initform (error ":neuron required")
@@ -844,3 +858,4 @@
                    (t (list :count (elt hidden-layer-neuron-counts (1- layer-index))
                             :transfer transfer)))))
        
+                
