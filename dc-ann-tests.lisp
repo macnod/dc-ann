@@ -4,20 +4,20 @@
 (defpackage dc-ann-tests (:use :cl :prove))
 (in-package :dc-ann-tests)
 
-(plan 1)
+(defun round-to-decimal-count (x decimal-count)
+  (float (/ (round (* x (expt 10 decimal-count))) (expt 10 decimal-count))))
 
-(ok (loop with expected-outputs = (list 0.7310586 0.26894143 1.0 0.0 0.5 0.5
-                                        0.880797 0.95257413 0.98201376 0.9933072
-                                        0.9975274 0.999089 0.99966466 0.9998766
-                                        0.9999546 0.11920292 0.047425874
-                                        0.01798621 0.006692851 0.002472623
-                                        9.110512e-4 3.3535014e-4 1.2339458e-4
-                                        4.5397872e-5) 
-       for input in (list 1 -1 1e10 -1e10 1e-10 -1e-10 
-                          2  3  4  5  6  7  8  9  10 
-                         -2 -3 -4 -5 -6 -7 -8 -9 -10)
-       for expected-output in expected-outputs
-       for output = (dc-ann::logistic input)
-       always (< (abs (- output expected-output)) 1e-10)))
+(plan 26)
+
+(loop for (input expected-output) in 
+     '((1 0.7311) (-1 0.2689) (1.0e10 1.0) (-1.0e10 0.0) 
+       (1.0e20 1.0) (-1.0e20 0.0) (1.0e-10 0.5) (-1.0e-10 0.5) 
+       (2 0.8808) (3 0.9526) (4 0.9820) (5 0.9933) 
+       (6 0.9975) (7 0.9991) (8 0.9997) (9 0.9999) 
+       (10 1.0) (-2 0.1192) (-3 0.0474) (-4 0.0180)
+       (-5 0.0067) (-6 0.0025) (-7 0.0009) (-8 0.0003) 
+       (-9 0.0001) (-10 0.0))
+       for output = (round-to-decimal-count (dc-ann::logistic input) 4)
+       do (is output expected-output))
 
 (finalize)

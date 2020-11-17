@@ -15,11 +15,6 @@
 (defun logistic-derivative (x)
   (* x (- 1 x)))
 
-(defun bound-logistic (x)
-  (cond ((< x -80) 0.0)
-        ((> x 80) 1.0)
-        (t (/ 1.0 (1+ (exp (- x)))))))
-
 (defun bound-logistic-derivative (x)
   (* x (- 1 x)))
 
@@ -44,7 +39,6 @@
 
 (loop with transfer-function-names = 
      (list (list :logistic #'logistic #'logistic-derivative)
-           (list :bound-logistic #'bound-logistic #'bound-logistic-derivative)
            (list :relu #'relu #'relu-derivative)
            (list :relu-leaky #'relu-leaky #'relu-leaky-derivative))
    for (name transfer derivative) in transfer-function-names
