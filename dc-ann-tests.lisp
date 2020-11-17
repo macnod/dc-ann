@@ -1,6 +1,7 @@
 (in-package :cl-user)
-(defpackage dc-ann-tests
-  (:use :cl :prove :dc-ann :dc-utilities))
+(require :dc-ann)
+(require :prove)
+(defpackage dc-ann-tests (:use :cl :prove))
 (in-package :dc-ann-tests)
 
 (plan 1)
@@ -15,7 +16,8 @@
        for input in (list 1 -1 1e10 -1e10 1e-10 -1e-10 
                           2  3  4  5  6  7  8  9  10 
                          -2 -3 -4 -5 -6 -7 -8 -9 -10)
-       for output in expected-output
-       always (< (abs (output - expected-output)) 1e-10)))
+       for expected-output in expected-outputs
+       for output = (dc-ann::logistic input)
+       always (< (abs (- output expected-output)) 1e-10)))
 
 (finalize)
