@@ -15,9 +15,6 @@
 (defun logistic-derivative (x)
   (* x (- 1 x)))
 
-(defun bound-logistic-derivative (x)
-  (* x (- 1 x)))
-
 (defun relu (x)
   (max 0 x))
 
