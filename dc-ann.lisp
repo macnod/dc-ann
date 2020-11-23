@@ -78,7 +78,8 @@
                 (neuron-index (layer neuron))))
   (incf (neuron-index (layer neuron)))
   (when (biased neuron)
-    (setf (input neuron) 1.0)))
+    (setf (input neuron) 1.0))
+  (setf (layer-type neuron) (layer-type (layer neuron))))
 
 (defclass t-layer ()
   ((neurons :accessor neurons :type list :initform nil)
@@ -101,16 +102,18 @@
     (incf (neuron-count layer)))
   (setf (neurons layer)
         (loop with neuron-count = (neuron-count layer)
+           and transfer-function-tag = (transfer-tag layer)
            for a from 0 below neuron-count
            for is-biased = (and (= a (1- neuron-count))
                                 (equal (layer-type layer) :hidden))
            collect (make-instance 't-neuron
                                   :layer layer
-                                  :layer-type (layer-type layer)
                                   :biased is-biased
                                   :net (net layer)
-                                  :transfer-function (gethash (transfer-tag layer)
-                                                              *transfer-functions*)))))
+                                  :transfer-function (or (gethash transfer-function-tag
+                                                                  *transfer-functions*)
+                                                         (error "Unknown transfer functiont tag ~a" 
+                                                                transfer-function-tag))))))
 
 (defgeneric set-transfer-function (target function-name)
   (:method ((neuron t-neuron) function-name)
@@ -845,8 +848,6 @@
      collect (cond ((zerop layer-index)
                     (list :count input-count :transfer transfer))
                    ((equal layer-index (1+ hidden-layer-count))
-                    (list :count output-count :transfer :bound-logistic))
+                    (list :count output-count :transfer :logistic))
                    (t (list :count (elt hidden-layer-neuron-counts (1- layer-index))
                             :transfer transfer)))))
-       
-                

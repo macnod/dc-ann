@@ -7,7 +7,14 @@
 (defun round-to-decimal-count (x decimal-count)
   (float (/ (round (* x (expt 10 decimal-count))) (expt 10 decimal-count))))
 
-(plan 3)
+(defun basic-net (id)
+  (make-instance 'dc-ann::t-net 
+                 :id id
+                 :topology '((:count 2 :transfer :logistic)
+                             (:count 4 :transfer :logistic)
+                             (:count 1 :transfer :logistic))))
+
+(plan 7)
 
 (ok (loop for (input expected-output) in
          '((1 0.7311) (-1 0.2689) (1.0e10 1.0) (-1.0e10 0.0)
@@ -45,5 +52,39 @@
                      (= leaky-output expected-output)))
     "Relu and relu-leaky functions return expected values for extreme inputs.")
 
+(ok (loop for tests from 1 to 100
+       for input = (- (random 1e6) 5e5)
+       for output = (dc-ann::relu input)
+       for leaky-output = (dc-ann::relu-leaky input)
+       always (if (< input 0) (zerop output) (= input output)))
+    "Relu returns sane values.")
+
+(ok (loop for (input expected-output) in
+         '((0.5025 0.25) (0.6425 0.2297) (0.5102 0.2499) (0.6417 0.2299) 
+           (0.0119 0.0118) (0.8801 0.1055) (0.3982 0.2396) (0.8253 0.1442) 
+           (0.7818 0.1706) (0.8463 0.1301) (0.0 0.0) (0.5 0.25) (1.0 0.0))
+       for output = (round-to-decimal-count (dc-ann::logistic-derivative input) 4)
+       always (= output expected-output))
+    "Logistic function derivative returns expected values.")
+
+(ok (loop for tests from 1 to 100
+       for input = (- (random 1e6) 5e5)
+       for output = (dc-ann::relu-derivative input)
+       for leaky-output = (dc-ann::relu-leaky-derivative input)
+       always (if (<= input 0) 
+                  (and (zerop output) (= leaky-output 0.001))
+                  (and (= output 1) (= leaky-output 1))))
+    "Relu and relu-leaky function derivatives return expected values.")
+
+(ok (loop for name in '(:logistic :relu :relu-leaky)
+       for expected-output in '(0.7311 1 1)
+       for transfer = (dc-ann::transfer (gethash name dc-ann::*transfer-functions*))
+       for output = (round-to-decimal-count (funcall transfer 1.0) 4)
+       always (= output expected-output))
+    "*transfer-functions* hash table correctly loaded.")
+
+(let* ((net (basic-net :net-1)))
+  t)
+      
 
 (finalize)
