@@ -44,7 +44,6 @@
                            :name name
                            :transfer transfer
                            :derivative derivative)))
-
 (defclass t-cx ()
   ((target :reader target :initarg :target :initform (error ":neuron required")
            :type t-neuron)
@@ -55,7 +54,7 @@
 (defclass t-neuron ()
   ((net :reader net :initarg :net :initform (error ":net required") :type t-net)
    (layer :accessor layer :initarg :layer :initform (error ":layer required"))
-   (layer-type :accessor layer-type :initarg :layer-type :initform (error ":layer-type required"))
+   (layer-type :accessor layer-type :initarg :layer-type :initform nil)
    (biased :reader biased :initarg :biased :initform nil :type boolean)
    (id :accessor id)
    (input :accessor input :initform 0.0 :type real)
@@ -64,8 +63,6 @@
    (output :accessor output :initform 0.0 :type real)
    (expected-output :accessor expected-output :initform 0.0 :type real)
    (err :accessor err :initform 0.0 :type real)
-   (err-raw :accessor err-raw :initform 0.0 :type real)
-   (delta :accessor delta :initform 0.0 :type real)
    (x-coor :accessor x-coor :initform 0.0 :type real)
    (y-coor :accessor y-coor :initform 0.0 :type real)
    (cxs :accessor cxs :initform nil :type list))
@@ -291,27 +288,26 @@
   (loop for input-row in input-rows
      collect (feed net input-row)))
 
+(defun signed-limit (value limit)
+  (if (< (abs value) limit) value (* (signum value) limit)))
+
+(defun limit-extent (value)
+  (let ((extent 1e6))
+    (if (< (abs value) extent) value (* (signum value) extent))))
+
+(defun limit-precision (value)
+  (let ((precision 1e-6))
+    (if (< (abs value) precision) (* (signum value) precision) value)))
+
 (defmethod compute-neuron-error ((neuron t-neuron))
   (let ((e (if (equal (layer-type neuron) :output) 
                (- (expected-output neuron)
                   (output neuron))
                (loop for cx in (cxs neuron)
                   summing (* (weight cx) (err (target cx)))))))
-    (setf (err-raw neuron) e)
     (setf (err neuron)
           (* e (funcall (derivative (transfer-function neuron))
                         (output neuron))))))
-
-(defun signed-limit (value limit)
-  (if (< (abs value) limit) value (* (signum value) limit)))
-
-(defun limit-extent (value)
-  (let ((extent 1e6))
-    (if (<= (abs value) extent) value (* (signum value) extent))))
-
-(defun limit-precision (value)
-  (let ((precision 1e-6))
-    (if (< (abs value) precision) (* (signum value) precision) value)))
 
 (defmethod update-neuron-weights ((neuron t-neuron))
   (loop 
@@ -328,7 +324,7 @@
   
 (defmethod backprop (net)
   (loop for layer in (reverse (layers net)) do
-       (loop for neuron in (neurons layer) do
+       (loop for neuron in (reverse (neurons layer)) do
             (compute-neuron-error neuron)
             (update-neuron-weights neuron))))
 
@@ -703,8 +699,12 @@
           do (render-neuron neuron))))
 
 (defun render-neuron (neuron)
-  (format t "  ~a in=~$ out=~$ exp=~$ err=~$~%"
-          (id neuron) (input neuron) (output neuron) (expected-output neuron) (err neuron))
+  (format t "  ~a~a in=~$ out=~$ exp=~$ err=~$~%"
+          (id neuron) (if (biased neuron) "b" "")
+          (input neuron) 
+          (output neuron) 
+          (expected-output neuron) 
+          (err neuron))
   (loop for cx in (cxs neuron)
      do (format t "    --> ~a: d=~$ w=~$~%"
                 (id (target cx))
@@ -717,6 +717,36 @@
           (loop for layer in (layers net) append
                (loop for neuron in (neurons layer) append
                     (loop for cx in (cxs neuron) collect (weight cx))))))
+
+(defun collect-weights (net)
+  (loop for layer in (layers net) append
+       (loop for neuron in (neurons layer) append
+            (loop for cx in (cxs neuron) collect (weight cx)))))
+
+(defun collect-outputs (net)
+  (loop for neuron in (neurons (output-layer net)) collect (input neuron)))
+
+(defun collect-expected-outputs (net)
+  (loop for neuron in (neurons (output-layer net)) collect (expected-output neuron)))
+
+(defun collect-all-outputs (net)
+  (loop for layer in (layers net) collect
+       (loop for neuron in (neurons layer) collect (output neuron))))
+
+(defun collect-inputs (net)
+  (loop for neuron in (neurons (input-layer net)) collect (input neuron)))
+
+(defun collect-all-inputs (net)
+  (loop for layer in (layers net) append
+       (loop for neuron in (neurons layer) collect (input neuron))))
+
+(defun apply-weights (net weights)
+  (loop with weights-copy = (copy-list weights)
+     for layer in (layers net) do
+       (loop for neuron in (neurons layer) do
+            (loop for cx in (cxs neuron) do
+                 (setf (weight cx) (pop weights-copy))))))
+                       
 
 (defmethod render-cxs ((neuron t-neuron))
   (format t "~a (~d outgoing connections)~%" (id neuron) (length (cxs neuron)))
@@ -750,7 +780,7 @@
 ;;   (sb-profile:report)
 ;;
 (defun train-1 (&key (transfer :relu)
-                  (hidden-layers 4)
+                  (hidden-layers 2)
                   (render-weights nil)
                   (max-time 30)
                   (max-iterations 1000)
@@ -765,13 +795,19 @@
                                 (:logistic -0.9)
                                 (:relu -0.9)
                                 (:relu-leaky -0.9)))
-                  (subsample-size 1000))
+                  (subsample-size 1000)
+                  (learning-rate 0.02)
+                  (momentum 0.1))
   (loop with net = (make-instance 
                     't-net 
                     :id :net1
-                    :momentum 0.1
-                    :learning-rate 0.02
-                    :topology (topography 2 hidden-layers 2 transfer))
+                    :momentum momentum
+                    :learning-rate learning-rate
+                    ;; :topology (topography 2 hidden-layers 2 transfer))
+                    :topology '((:count 2 :transfer :relu)
+                                (:count 8 :transfer :relu)
+                                (:count 4 :transfer :relu)
+                                (:count 2 :transfer :logistic)))
      and time-tracker = (make-time-tracker)
      with training-set-raw = (circle-data-1hs net sample-size)
      with training-set-vec = (map 'vector 'identity training-set-raw)
@@ -840,7 +876,7 @@
 
 (defun neurons-per-hidden-layer (hidden-layer-count)
   (loop for layer-index from hidden-layer-count downto 1
-     collect (expt 2 (1+ layer-index))))
+     collect (1+ (expt 2 (1+ layer-index)))))
 
 (defun topography (input-count hidden-layer-count output-count transfer)
   (loop with hidden-layer-neuron-counts = (neurons-per-hidden-layer hidden-layer-count)
@@ -851,3 +887,4 @@
                     (list :count output-count :transfer :logistic))
                    (t (list :count (elt hidden-layer-neuron-counts (1- layer-index))
                             :transfer transfer)))))
+

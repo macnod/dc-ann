@@ -83,8 +83,4 @@
        always (= output expected-output))
     "*transfer-functions* hash table correctly loaded.")
 
-(let* ((net (basic-net :net-1)))
-  t)
-      
-
 (finalize)
